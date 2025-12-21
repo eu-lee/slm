@@ -9,9 +9,9 @@ from torch.nn import functional as F
 block_size = 8 #context window
 batch_size = 32 #parallel operations
 
-epochs = 10000 #training iterations
+epochs = 5000 #training iterations
 
-device = torch.device("mps")
+device = torch.device("cuda")
 learning_rate = 1e-3
 
 # how often to run evaluation
@@ -78,6 +78,31 @@ def estimate_loss():
     model.train()
     return out
 
+class Head(nn.Module):
+    
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embed, head_size, bias=False)
+        self.query = nn.Linear(n_embed, head_size, bias=False)
+        self.value = nn.Linear(n_embed, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+    def forward(self, x):
+        B,T,C = x.shape
+        k = self.key(x)   # (B,T,head_size)
+        q = self.query(x) # (B,T,head_size)
+
+        wei = q @ k.transpose(-2,-1) * C**-0.5 # (B,T,head_size) @ (B,head_size,T) -> (B,T,T)
+
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        wei = F.softmax(wei, dim=-1) # (B,T,T)
+
+
+        v = self.value(x) # (B,T,head_size)
+
+        out = wei @ v # (B,T,T) @ (B,T,head_size) -> (B,T,head_size)
+        return out
+
 class BigramModel(nn.Module):
     def __init__(self, vocab_size):
         super().__init__()
@@ -89,6 +114,7 @@ class BigramModel(nn.Module):
         '''
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
         self.position_embedding_table = nn.Embedding(block_size, n_embed)
+        self.sa_head = Head(n_embed)
         self.lm_head = nn.Linear(n_embed,vocab_size)
 
     def forward(self, idx, targets = None):
@@ -99,7 +125,7 @@ class BigramModel(nn.Module):
         pos_embedding = self.position_embedding_table(torch.arange(T,device = device))
         
         x = token_embedding + pos_embedding #enable position-based embeddings 
-
+        x = self.sa_head(x) # (B,T,C)
         logits = self.lm_head(x) # (B, T, vocab_size)
 
         # holds token identities and positions
@@ -118,18 +144,17 @@ class BigramModel(nn.Module):
             '''
             loss = F.cross_entropy(logits,targets)
         return logits, loss
-
+    
 
     def generate(self, idx, max_new_tokens):
         for _ in range(max_new_tokens):
-            logits, loss = self(idx)
-            logits = logits[ :, -1,:] #most recent timestamp, hence "bi-gram"
-            probabilities = F.softmax(logits, dim=1)
-            idx_next = torch.multinomial(probabilities,num_samples=1)
-            idx = torch.cat((idx,idx_next),dim=1)
-
+            idx_cond = idx[:, -block_size:] # use only the recent context
+            logits, _ = self(idx_cond)
+            logits = logits[:, -1, :] # last time step
+            probs = F.softmax(logits, dim=1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
         return idx
-
 
 model = BigramModel(vocab_size)
 
