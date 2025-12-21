@@ -1,10 +1,8 @@
 import numpy
 import torch
-
-from datasets import load_dataset
-
-ds = load_dataset("starhopp3r/TinyChat")
-
+import json
+from transformers import GPT2TokenizerFast
+from transformers import GPT2LMHeadModel
 
 import numpy
 import os
@@ -35,22 +33,29 @@ device = torch.device("cuda")
 
 # < data loading >
 
-path = os.path.join("../data", "shakespeare.txt")
-with open(path,"r", encoding= "UTF-8") as f:
-    text = f.read()
+# Load the trained tokenizer
+print("Loading trained tokenizer...")
+tokenizer = GPT2TokenizerFast.from_pretrained("./tokenizer")
+vocab_size = tokenizer.vocab_size
+print(f"Tokenizer loaded with vocab size: {vocab_size}")
 
-'''
-tokenization by character
-'''
-chars = sorted(set(list(text)))
-vocab_size = len(chars)
+# Load pre-tokenized data
+print("Loading pre-tokenized data...")
+token_ids_array = numpy.load("./tokenizer/processed_data/token_ids.npy", allow_pickle=True)
 
-stoi = { ch:i for i,ch in enumerate(chars) }
-itos = { i:ch for i,ch in enumerate(chars) }
-encode = lambda s: [stoi[c] for c in s] # encoder: take a string, output a list of integers
-decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
+# Load metadata
+with open("./tokenizer/processed_data/metadata.json") as f:
+    metadata = json.load(f)
 
-data = torch.tensor(encode(text),dtype=torch.long)
+block_size = metadata['block_size']
+print(f"Block size from metadata: {block_size}")
+
+# Flatten token arrays into a single tensor
+data = torch.tensor(numpy.concatenate([numpy.array(tokens, dtype=numpy.int32) for tokens in token_ids_array]), dtype=torch.long)
+print(f"Total tokens loaded: {len(data)}")
+
+# Define decode function for generation
+decode = lambda l: tokenizer.decode(l, skip_special_tokens=False)
 
 n = int(0.9*len(data))
 train_data = data[:n]
@@ -150,7 +155,7 @@ class Block(nn.Module):
         x = x + self.ffwd(self.ln2(x))
         return x
 
-class BigramModel(nn.Module):
+class GPT(nn.Module):
     def __init__(self, vocab_size):
         super().__init__()
         
@@ -206,7 +211,10 @@ class BigramModel(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
 
-model = BigramModel(vocab_size)
+model = GPT(vocab_size)
+
+# Resize embeddings to account for special tokens added to tokenizer
+model.resize_token_embeddings(len(tokenizer))
 
 model.to(device)
 '''
@@ -242,8 +250,6 @@ for iter in range(epochs):
         try:
             checkpoint = {
                 'model_state_dict': model.state_dict(),
-                'stoi': stoi,
-                'itos': itos,
                 'vocab_size': vocab_size,
                 'n_embed': n_embed,
                 'n_layers': n_layers,
@@ -251,6 +257,7 @@ for iter in range(epochs):
                 'dropout': dropout,
                 'block_size': block_size,
                 'iter': iter,
+                'tokenizer_name': 'GPT2TokenizerFast',
             }
             torch.save(checkpoint, f'./checkpoints/checkpoint_iter_{iter}.pth')
             print(f"Saved checkpoint at iter {iter} -> model_checkpoint.pth")
@@ -276,8 +283,6 @@ print(decode(model.generate(idx = torch.zeros((1, 1), dtype=torch.long, device =
 try:
     checkpoint = {
         'model_state_dict': model.state_dict(),
-        'stoi': stoi,
-        'itos': itos,
         'vocab_size': vocab_size,
         'n_embed': n_embed,
         'n_layers': n_layers,
@@ -285,6 +290,7 @@ try:
         'dropout': dropout,
         'block_size': block_size,
         'iter': epochs - 1,
+        'tokenizer_name': 'GPT2TokenizerFast',
     }
     torch.save(checkpoint, './checkpoints/final_model_checkpoint.pth')
     print("Saved final checkpoint -> model_checkpoint.pth")

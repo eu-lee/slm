@@ -77,7 +77,7 @@ class Block(nn.Module):
         x = x + self.ffwd(self.ln2(x))
         return x
 
-class BigramModel(nn.Module):
+class GPT(nn.Module):
     def __init__(self, vocab_size):
         super().__init__()
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
@@ -118,7 +118,7 @@ encode = lambda s: [stoi.get(c, 0) for c in s]
 decode = lambda l: ''.join([itos[int(i)] for i in l])
 
 # build model and load weights
-model = BigramModel(vocab_size)
+model = GPT(vocab_size)
 model.load_state_dict(ckpt['model_state_dict'])
 model.to(device)
 model.eval()
