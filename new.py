@@ -6,21 +6,23 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 #hyperparams
-block_size = 8 #context window
-batch_size = 32 #parallel operations
+block_size = 256 #context window
+batch_size = 64 #parallel operations
 
 epochs = 5000 #training iterations
 
 device = torch.device("cuda")
-learning_rate = 1e-3
+learning_rate = 3e-4
 
 # how often to run evaluation
 eval_interval = 100
-n_embed = 32
+n_embed = 384
 
 #the average the loss is taken by
 eval_iters = 200
-
+n_layers = 4
+n_head = 6
+dropout = 0.2
 # < data loading >
 
 path = os.path.join("data", "shakespeare.txt")
@@ -44,14 +46,6 @@ n = int(0.9*len(data))
 train_data = data[:n]
 test_data = data[n:]
 
-
-'''
-essentially, we are given an index of [1,8] tokens, the expected output for the
-i-th token is j in [2,9]
-
-x = train_data[:block_size] # input tokens
-y = train_data[1:block_size+1] # expected output logits
-'''
 def get_batch(split):
     data = train_data if split == "train" else test_data
     ix = torch.randint(len(data) - block_size, (batch_size,))
@@ -87,6 +81,7 @@ class Head(nn.Module):
         self.value = nn.Linear(n_embed, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
+        self.dropout = nn.Dropout(dropout)
     def forward(self, x):
         B,T,C = x.shape
         k = self.key(x)   # (B,T,head_size)
@@ -97,11 +92,53 @@ class Head(nn.Module):
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1) # (B,T,T)
 
-
+        wei = self.dropout(wei)
         v = self.value(x) # (B,T,head_size)
 
         out = wei @ v # (B,T,T) @ (B,T,head_size) -> (B,T,head_size)
         return out
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(n_embed, n_embed)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        out = self.proj(torch.cat([h(x) for h in self.heads], dim=-1))
+        out = self.dropout(self.proj(out))
+        return out
+
+class FeedForward(nn.Module):
+    def __init__(self, n_embed):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embed,4* n_embed),
+            nn.ReLU(),
+            nn.Linear(4*n_embed, n_embed),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+# transformer block
+
+class Block(nn.Module):
+    def __init__(self, n_embed, n_head):
+        super().__init__()
+        head_size = n_embed // n_head
+        self.sa = MultiHeadAttention(n_head, head_size)
+        self.ffwd = FeedForward(n_embed)
+        self.ln1 = nn.LayerNorm(n_embed)
+        self.ln2 = nn.LayerNorm(n_embed)
+
+    def forward(self, x):
+        x = x+ self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
+        return x
 
 class BigramModel(nn.Module):
     def __init__(self, vocab_size):
@@ -114,7 +151,9 @@ class BigramModel(nn.Module):
         '''
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
         self.position_embedding_table = nn.Embedding(block_size, n_embed)
-        self.sa_head = Head(n_embed)
+
+        self.blocks = nn.Sequential(*[Block(n_embed, n_head=n_head) for _ in range(n_layers)])
+        self.ln_final = nn.LayerNorm(n_embed)
         self.lm_head = nn.Linear(n_embed,vocab_size)
 
     def forward(self, idx, targets = None):
@@ -125,7 +164,8 @@ class BigramModel(nn.Module):
         pos_embedding = self.position_embedding_table(torch.arange(T,device = device))
         
         x = token_embedding + pos_embedding #enable position-based embeddings 
-        x = self.sa_head(x) # (B,T,C)
+        x = self.blocks(x) # (B,T,C)
+        x = self.ln_final(x) # (B,T,C)
         logits = self.lm_head(x) # (B, T, vocab_size)
 
         # holds token identities and positions
