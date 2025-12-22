@@ -159,11 +159,6 @@ class GPT(nn.Module):
     def __init__(self, vocab_size):
         super().__init__()
         
-        '''
-        conversion between tokens and predicted next token.
-        it is a vocab_size x vocab_size matrix, representing the raw score. Given a letter i, the probability of j occuring
-        is represented by token_embedding_table[i][j] (not normalized)
-        '''
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
         self.position_embedding_table = nn.Embedding(block_size, n_embed)
 
@@ -211,10 +206,7 @@ class GPT(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
 
-model = GPT(vocab_size)
-
-# Resize embeddings to account for special tokens added to tokenizer
-model.resize_token_embeddings(len(tokenizer))
+model = GPT(len(tokenizer))  # Use actual tokenizer size including special tokens
 
 model.to(device)
 '''

@@ -24,9 +24,9 @@ print(f"Dataset loaded. Training samples: {len(ds['train'])}")
 print(f"Sample: {ds['train'][0]}")
 
 def convert_inst_to_roles(text):
-    """Convert instruction format text to user/assistant role format."""
-    chunks = []
+    """Split multi-turn conversations into individual user-assistant pairs."""
     parts = text.split("[INST]")
+    pairs = []
 
     for part in parts:
         if "[/INST]" not in part:
@@ -37,21 +37,23 @@ def convert_inst_to_roles(text):
         user = user.strip()
         assistant = assistant.strip()
 
-        if user:
-            chunks.append(f"<|user|> {user}")
-        if assistant:
-            chunks.append(f"<|assistant|> {assistant}")
+        # Create individual conversation pairs: <|user|> message\n<|assistant|> reply
+        if user and assistant:
+            pair = f"<|user|> {user}\n<|assistant|> {assistant}"
+            pairs.append(pair)
 
-    return "\n".join(chunks)
+    return pairs
 
 
 def tokenizer_text_iterator():
     """Iterator that yields converted text from dataset."""
     for sample in ds["train"]:
         text = sample["text"]
-        converted_text = convert_inst_to_roles(text)
-        if converted_text.strip():
-            yield converted_text
+        pairs = convert_inst_to_roles(text)
+        for pair in pairs:
+            if pair.strip():
+                # include explicit EOS marker so tokenizer learns the EOS token in context
+                yield pair + " <|eos|>"
 
 
 def chunk_conversation(text, tokenizer, block_size):
@@ -114,25 +116,36 @@ def process_and_tokenize_dataset(tokenizer):
             print(f"Processing sample {idx}/{len(ds['train'])}")
         
         text = sample["text"]
-        converted_text = convert_inst_to_roles(text)
+        pairs = convert_inst_to_roles(text)
         
-        if not converted_text.strip():
-            continue
-        
-        # Chunk the text
-        chunks = chunk_conversation(converted_text, tokenizer, BLOCK_SIZE)
-        
-        for chunk in chunks:
-            # Tokenize chunk
+        for pair in pairs:
+            if not pair.strip():
+                continue
+            
+            # Tokenize individual pair without adding special tokens (we'll append EOS explicitly)
             tokens = tokenizer(
-                chunk,
+                pair,
+                add_special_tokens=False,
                 return_tensors=None,
                 truncation=True,
-                max_length=BLOCK_SIZE + 1
+                max_length=BLOCK_SIZE - 1,
             )["input_ids"]
-            
+
+            # ensure tokens is a plain list
+            if isinstance(tokens, list) and len(tokens) == 1 and isinstance(tokens[0], list):
+                tokens = tokens[0]
+
+            # append EOS token id so model can learn sequence termination
+            eos_id = tokenizer.eos_token_id
+            if eos_id is not None:
+                tokens = list(tokens) + [eos_id]
+
+            # truncate to block_size if appending EOS exceeded the limit
+            if len(tokens) > BLOCK_SIZE:
+                tokens = tokens[:BLOCK_SIZE]
+
             all_token_ids.append(tokens)
-            all_chunks.append(chunk)
+            all_chunks.append(pair + " <|eos|>")
             chunk_count += 1
     
     print(f"\nTotal chunks created: {chunk_count}")
@@ -140,7 +153,7 @@ def process_and_tokenize_dataset(tokenizer):
     return all_token_ids, all_chunks
 
 
-def save_tokenized_data(token_ids, chunks):
+def save_tokenized_data(token_ids, chunks, tokenizer):
     """Save tokenized data for training."""
     print("\nSaving tokenized data...")
     
@@ -162,8 +175,8 @@ def save_tokenized_data(token_ids, chunks):
     metadata = {
         "total_chunks": len(chunks),
         "block_size": BLOCK_SIZE,
-        "vocab_size": VOCAB_SIZE,
-        "avg_tokens_per_chunk": np.mean([len(t) for t in token_ids])
+        "vocab_size": tokenizer.vocab_size,
+        "avg_tokens_per_chunk": float(np.mean([len(t) for t in token_ids]))
     }
     
     metadata_file = os.path.join(DATA_OUTPUT_DIR, "metadata.json")
@@ -183,14 +196,14 @@ def main():
         token_ids, chunks = process_and_tokenize_dataset(tokenizer)
         
         # Save tokenized data
-        save_tokenized_data(token_ids, chunks)
+        save_tokenized_data(token_ids, chunks, tokenizer)
         
-        print("\n✓ Tokenizer generation complete!")
-        print(f"✓ Tokenizer saved to: {OUTPUT_DIR}")
-        print(f"✓ Processed data saved to: {DATA_OUTPUT_DIR}")
+        print("\nTokenizer generation complete!")
+        print(f"Tokenizer saved to: {OUTPUT_DIR}")
+        print(f"Processed data saved to: {DATA_OUTPUT_DIR}")
         
     except Exception as e:
-        print(f"\n✗ Error during tokenizer generation: {str(e)}")
+        print(f"\nError during tokenizer generation: {str(e)}")
         raise
 
 

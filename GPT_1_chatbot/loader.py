@@ -1,23 +1,39 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from transformers import GPT2TokenizerFast
 
-# Load checkpoint (saved by train.py)
-ckpt_path = 'model_checkpoint.pth'
-ckpt = torch.load(ckpt_path, map_location='cpu')
+# find checkpoint
+CKPT_CANDIDATES = [
+    './checkpoints/final_model_checkpoint.pth',
+    './checkpoints/checkpoint_iter_100.pth',
+    './checkpoints/checkpoint_iter_0.pth',
+    './model_checkpoint.pth'
+]
+ckpt_path = next((p for p in CKPT_CANDIDATES if os.path.exists(p)), None)
+if ckpt_path is None:
+    raise FileNotFoundError('No checkpoint found. Expected one of: ' + ', '.join(CKPT_CANDIDATES))
 
 # device selection
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# restore token maps and hyperparameters
-stoi = ckpt['stoi']
-itos = ckpt['itos']
-vocab_size = ckpt['vocab_size']
-n_embed = ckpt['n_embed']
-n_layers = ckpt['n_layers']
-n_head = ckpt['n_head']
-dropout = ckpt['dropout']
-block_size = ckpt['block_size']
+# load checkpoint
+ckpt = torch.load(ckpt_path, map_location=device)
+
+# load tokenizer from trained tokenizer directory (preferred) or from checkpoint metadata
+if os.path.isdir('./tokenizer'):
+    tokenizer = GPT2TokenizerFast.from_pretrained('./tokenizer')
+else:
+    tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
+
+# restore hyperparameters from checkpoint
+vocab_size = len(tokenizer)
+n_embed = ckpt.get('n_embed')
+n_layers = ckpt.get('n_layers')
+n_head = ckpt.get('n_head')
+dropout = ckpt.get('dropout', 0.0)
+block_size = ckpt.get('block_size', 384)
 
 # define model classes (matches train.py)
 class Head(nn.Module):
@@ -103,19 +119,59 @@ class GPT(nn.Module):
             loss = F.cross_entropy(logits, targets)
         return logits, loss
 
-    def generate(self, idx, max_new_tokens):
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, min_new_tokens=3):
+        eos_token_id = tokenizer.eos_token_id
+        user_token_id = tokenizer.get_vocab().get("<|user|>")
+        assistant_token_id = tokenizer.get_vocab().get("<|assistant|>")
+        tokens_generated = 0
+
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -block_size:]
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :]
+
+            # apply temperature
+            logits = logits / max(1e-9, temperature)
+
+            # apply top-k filtering
+            if top_k is not None:
+                top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=1)
+                logits_filtered = torch.full_like(logits, float('-inf'))
+                logits_filtered.scatter_(1, top_k_indices, top_k_logits)
+                logits = logits_filtered
+
+            # prevent immediate EOS or <|user|> until minimum tokens generated
+            if tokens_generated < min_new_tokens:
+                if eos_token_id is not None:
+                    logits[:, eos_token_id] = float('-inf')
+                if user_token_id is not None:
+                    logits[:, user_token_id] = float('-inf')
+                if assistant_token_id is not None:
+                    logits[:, assistant_token_id] = float('-inf')
+
             probs = F.softmax(logits, dim=1)
             idx_next = torch.multinomial(probs, num_samples=1)
+
+            next_token = idx_next.item()
+            # stop if EOS token or <|user|> token generated after min_new_tokens
+            if tokens_generated >= min_new_tokens and (
+                (eos_token_id is not None and next_token == eos_token_id) or
+                (user_token_id is not None and next_token == user_token_id) or
+                (assistant_token_id is not None and next_token == assistant_token_id)
+            ):
+                break
+
             idx = torch.cat((idx, idx_next), dim=1)
+            tokens_generated += 1
         return idx
 
-# helper encode/decode
-encode = lambda s: [stoi.get(c, 0) for c in s]
-decode = lambda l: ''.join([itos[int(i)] for i in l])
+# helper encode/decode using tokenizer
+def encode(text):
+    return tokenizer.encode(text, add_special_tokens=False)
+
+def decode(token_ids):
+    return tokenizer.decode(token_ids, skip_special_tokens=True)
+
 
 # build model and load weights
 model = GPT(vocab_size)
@@ -123,25 +179,87 @@ model.load_state_dict(ckpt['model_state_dict'])
 model.to(device)
 model.eval()
 
-print("Loaded model from:", ckpt_path)
-print("Device:", device)
 
-# simple interactive loop
+total_params = sum(p.numel() for p in model.parameters())
+print(f"Total parameters: {total_params:,}")
+
+print('Loaded model from:', ckpt_path)
+print('Device:', device)
+
+def chat(prompt, history=None, max_new_tokens=60, temperature=0.7, top_k=40, min_new_tokens=3, history_max_tokens=None):
+    """Return generated reply and updated history.
+    Args:
+        prompt: Input text from the user.
+        history: List of (role, text) tuples to include in context.
+        max_new_tokens: Max tokens to generate.
+        temperature: Sampling temperature.
+        top_k: Top-k sampling.
+        min_new_tokens: Minimum tokens to generate before allowing EOS/user stop.
+        history_max_tokens: Maximum allowed tokens for historical chat; if exceeded, history is cleared.
+    Returns:
+        reply (str), updated_history (list)
+    """
+    if history is None:
+        history = []
+
+    # default history max tokens to model block size minus a safety margin
+    if history_max_tokens is None:
+        history_max_tokens = max(1, block_size - 50)
+
+    # compute token count of the historical chat
+    hist_token_count = 0
+    for role, text in history:
+        if role == "user":
+            hist_token_count += len(tokenizer.encode("<|user|> " + text + " <|assistant|>", add_special_tokens=False))
+        else:
+            hist_token_count += len(tokenizer.encode("<|assistant|> " + text + " <|eos|>", add_special_tokens=False))
+
+    # if history exceeds allowed tokens, clear it and notify
+    if hist_token_count > history_max_tokens:
+        print(f"History exceeded {history_max_tokens} tokens (was {hist_token_count}); clearing history.")
+        history = []
+
+    # build prompt tokens including recent history
+    toks = []
+    for role, text in history:
+        if role == "user":
+            toks += tokenizer.encode("<|user|> " + text + " <|assistant|>", add_special_tokens=False)
+        else:
+            toks += tokenizer.encode("<|assistant|> " + text + " <|eos|>", add_special_tokens=False)
+
+    # add current user prompt
+    toks += tokenizer.encode("<|user|> " + prompt + " <|assistant|>", add_special_tokens=False)
+
+    idx = torch.tensor([toks], dtype=torch.long).to(device)
+    out = model.generate(idx, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, min_new_tokens=min_new_tokens)
+    out_tokens = out[0, idx.shape[1]:].tolist()
+
+    # if reply is empty, fallback to greedy decoding
+    if len(out_tokens) == 0:
+        idx = torch.tensor([toks], dtype=torch.long).to(device)
+        for _ in range(max_new_tokens):
+            logits, _ = model(idx[:, -block_size:])
+            logits = logits[:, -1, :]
+            next_token = torch.argmax(logits, dim=1, keepdim=True)
+            idx = torch.cat((idx, next_token), dim=1)
+            if tokenizer.eos_token_id is not None and next_token.item() == tokenizer.eos_token_id:
+                break
+        out_tokens = idx[0, len(toks):].tolist()
+
+    reply = tokenizer.decode(out_tokens, skip_special_tokens=True)
+    history.append(("assistant", reply))
+    return reply, history
+
+
 if __name__ == '__main__':
     try:
+        history = []
         while True:
             prompt = input('You: ')
             if prompt.strip().lower() in ('quit', 'exit'):
                 print('Exiting.')
                 break
-            encoded = encode(prompt)
-            if len(encoded) == 0:
-                encoded = [0]
-            idx = torch.tensor([encoded], dtype=torch.long, device=device)
-            out = model.generate(idx, max_new_tokens=200)
-            out_list = out[0].tolist()
-            # show only generated part after the prompt
-            generated = decode(out_list)[len(prompt):]
-            print('Bot:', generated)
+            reply, history = chat(prompt, history=history)
+            print('Bot:', reply)
     except KeyboardInterrupt:
         print('\nInterrupted. Exiting.')
