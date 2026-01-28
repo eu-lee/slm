@@ -9,14 +9,14 @@ CKPT_CANDIDATES = [
     './checkpoints/final_model_checkpoint.pth',
     './checkpoints/checkpoint_iter_100.pth',
     './checkpoints/checkpoint_iter_0.pth',
-    './model_checkpoint.pth'
+    './final_model_checkpoint.pth'
 ]
 ckpt_path = next((p for p in CKPT_CANDIDATES if os.path.exists(p)), None)
 if ckpt_path is None:
     raise FileNotFoundError('No checkpoint found. Expected one of: ' + ', '.join(CKPT_CANDIDATES))
 
-# device selection
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# device selection (CUDA > MPS > CPU)
+device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 
 # load checkpoint
 ckpt = torch.load(ckpt_path, map_location=device)
@@ -260,6 +260,6 @@ if __name__ == '__main__':
                 print('Exiting.')
                 break
             reply, history = chat(prompt, history=history)
-            print('Bot:', reply)
+            print('Bot:', reply.strip())
     except KeyboardInterrupt:
         print('\nInterrupted. Exiting.')

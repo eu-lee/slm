@@ -52,4 +52,4 @@ Run the interactive chatbot:
 python loader.py
 ```
 
-The chatbot will load the trained model and tokenizer, then enter an interactive chat loop. Type your messages and press Enter. Type 'quit' or 'exit' to end the conversation. 
+The chatbot will load the trained model and tokenizer, then enter an interactive chat loop. Type your messages and press Enter. Type 'quit' or 'exit' to end the conversation. For best responses, look at the dataset (queries typically start with an "I feel")
