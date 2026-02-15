@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, FormEvent } from "react";
 import { useAuth } from "./auth";
+import SlmIcon from "./icons/slm";
 
 interface Message {
   id?: number;
@@ -29,12 +30,10 @@ export default function Home() {
   const [editTitle, setEditTitle] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showSavePopup, setShowSavePopup] = useState(false);
-  const [pendingGuestMessage, setPendingGuestMessage] = useState<string | null>(null);
   const [guestDismissed, setGuestDismissed] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const isAuthed = !!token && !isGuest;
-  // Treat as guest if not logged in (no redirect)
   const isGuestMode = !isAuthed;
   const hasMessages = messages.length > 0;
 
@@ -53,6 +52,16 @@ export default function Home() {
       loginAsGuest();
     }
   }, [loading, token, isGuest, loginAsGuest]);
+
+  // Clear state when switching to guest mode (e.g. after logout)
+  useEffect(() => {
+    if (isGuestMode) {
+      setConversations([]);
+      setActiveConvId(null);
+      setMessages([]);
+      setGuestDismissed(false);
+    }
+  }, [isGuestMode]);
 
   const loadConversations = useCallback(async () => {
     if (!isAuthed) return;
@@ -231,6 +240,10 @@ export default function Home() {
     } finally {
       setIsStreaming(false);
       if (isAuthed) loadConversations();
+      // Show save popup after first guest reply (with delay)
+      if (isGuestMode && !guestDismissed && !showSavePopup) {
+        setTimeout(() => setShowSavePopup(true), 3000);
+      }
     }
   }
 
@@ -238,24 +251,12 @@ export default function Home() {
     e.preventDefault();
     const text = input.trim();
     if (!text || isStreaming) return;
-
-    // Guest first message: show save popup
-    if (isGuestMode && messages.length === 0 && !guestDismissed) {
-      setPendingGuestMessage(text);
-      setShowSavePopup(true);
-      return;
-    }
-
     await sendMessage(text);
   }
 
-  function handleGuestContinue() {
+  function handleGuestDismiss() {
     setShowSavePopup(false);
     setGuestDismissed(true);
-    if (pendingGuestMessage) {
-      sendMessage(pendingGuestMessage);
-      setPendingGuestMessage(null);
-    }
   }
 
   if (loading) return null;
@@ -278,7 +279,7 @@ export default function Home() {
                 Log in or Register
               </button>
               <button
-                onClick={handleGuestContinue}
+                onClick={handleGuestDismiss}
                 className="w-full rounded-xl bg-transparent border border-gray-600 text-gray-300 px-4 py-2.5 text-sm font-medium hover:bg-gray-700 transition-colors"
               >
                 Continue without saving
@@ -392,26 +393,10 @@ export default function Home() {
         </div>
       )}
 
-      {/* Guest bottom-left login panel */}
-      {isGuestMode && (
-        <div className="fixed bottom-0 left-0 z-10 px-4 py-3 flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-[#171717] rounded-xl px-4 py-2.5">
-            <span className="text-sm text-gray-500">Not logged in</span>
-            <span className="text-gray-700">|</span>
-            <button
-              onClick={() => { window.location.href = "/login"; }}
-              className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
-            >
-              Log in
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Main area */}
       <div className="flex flex-col flex-1 min-w-0">
         {/* Top bar */}
-        <header className="flex items-center h-12 px-4">
+        <header className="relative z-10 flex items-center h-12 px-4">
           {isAuthed && (
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -422,35 +407,101 @@ export default function Home() {
               </svg>
             </button>
           )}
+          {/* Guest: logo/new-chat button to the left of title */}
+          {isGuestMode && (
+            <button
+              onClick={hasMessages ? newChat : undefined}
+              className="group mr-2 flex-shrink-0"
+              title={hasMessages ? "New chat" : "SLM Chat"}
+            >
+              {/* Default: logo icon */}
+              <SlmIcon size={28} className="group-hover:hidden" />
+              {/* Hover: new chat pencil inside squircle */}
+              <svg className="hidden group-hover:block text-gray-400" width="28" height="28" viewBox="0 0 640 640" fill="none">
+                <rect width="640" height="640" rx="128" fill="none" stroke="currentColor" strokeWidth="32" />
+                <g transform="translate(180, 180) scale(11.7)">
+                  <path d="M12 20h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </g>
+              </svg>
+            </button>
+          )}
           <span className="text-base font-medium text-gray-200">SLM Chat</span>
+          {/* Guest: auth buttons on the right */}
+          {isGuestMode && (
+            <div className="ml-auto flex items-center gap-2">
+              <a
+                href="/login"
+                className="rounded-lg border border-[#3f3f3f] px-3 py-1.5 text-sm text-gray-300 hover:bg-[#2f2f2f] transition-colors"
+              >
+                Log In
+              </a>
+              <a
+                href="/login?register=true"
+                className="rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-black hover:bg-gray-200 transition-colors"
+              >
+                Sign Up for Free
+              </a>
+            </div>
+          )}
         </header>
-
         {/* Chat area */}
         {!hasMessages ? (
           /* Empty state: centered prompt */
-          <div className="flex-1 flex flex-col items-center justify-center px-4">
-            <h2 className="text-[28px] font-semibold text-gray-100 mb-8">
+          <div className="flex-1 flex flex-col items-center justify-center px-4 -mt-52">
+            <h2 className="text-[28px] font-normal text-gray-100 mb-8">
               What&apos;s on your mind today?
             </h2>
             <form onSubmit={handleSubmit} className="w-full max-w-[680px]">
-              <div className="relative">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask anything"
-                  disabled={isStreaming}
-                  className="w-full rounded-2xl bg-[#2f2f2f] border-none px-5 py-4 pr-14 text-base text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-600 disabled:opacity-50"
-                />
-                <button
-                  type="submit"
-                  disabled={isStreaming || !input.trim()}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white flex items-center justify-center disabled:opacity-30 disabled:bg-gray-600 transition-colors"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
-                  </svg>
-                </button>
+              <div className="relative bg-[#2f2f2f] rounded-full has-[textarea:not([data-single-line])]:rounded-3xl transition-all">
+                <div className="flex items-end gap-2 px-3 py-2.5">
+                  <button
+                    type="button"
+                    className="flex-shrink-0 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-300"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="12" y1="5" x2="12" y2="19"></line>
+                      <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                  </button>
+                  <textarea
+                    value={input}
+                    onChange={(e) => {
+                      setInput(e.target.value);
+                      // Auto-resize
+                      e.target.style.height = 'auto';
+                      const newHeight = Math.min(e.target.scrollHeight, 200);
+                      e.target.style.height = newHeight + 'px';
+                      // Toggle attribute for styling
+                      if (newHeight > 24) {
+                        e.target.removeAttribute('data-single-line');
+                      } else {
+                        e.target.setAttribute('data-single-line', '');
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSubmit(e);
+                      }
+                    }}
+                    placeholder="Ask anything"
+                    disabled={isStreaming}
+                    rows={1}
+                    data-single-line=""
+                    className="flex-1 bg-transparent border-none px-2 py-1 text-base text-gray-100 placeholder-gray-500 focus:outline-none disabled:opacity-50 resize-none overflow-hidden"
+                    style={{ minHeight: '24px', maxHeight: '200px' }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={isStreaming || !input.trim()}
+                    className="flex-shrink-0 w-8 h-8 rounded-full bg-white flex items-center justify-center disabled:opacity-30 disabled:bg-gray-600 transition-colors"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -469,11 +520,7 @@ export default function Home() {
                   ) : (
                     <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : ""}`}>
                       {msg.role === "assistant" && (
-                        <div className="w-7 h-7 rounded-full bg-[#19c37d] flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="white" stroke="none">
-                            <path d="M22.2819 9.8211a5.9847 5.9847 0 00-.5157-4.9108 6.0462 6.0462 0 00-6.5098-2.9A6.0651 6.0651 0 004.9807 4.1818a5.9847 5.9847 0 00-3.9977 2.9 6.0462 6.0462 0 00.7427 7.0966 5.98 5.98 0 00.511 4.9107 6.051 6.051 0 006.5146 2.9001A5.9847 5.9847 0 0013.2599 24a6.0557 6.0557 0 005.7718-4.2058 5.9894 5.9894 0 003.9977-2.9001 6.0557 6.0557 0 00-.7475-7.0729z" />
-                          </svg>
-                        </div>
+                        <SlmIcon size={28} className="flex-shrink-0 mt-0.5" />
                       )}
                       <div
                         className={`text-sm leading-relaxed max-w-[85%] ${
@@ -496,24 +543,55 @@ export default function Home() {
             {/* Bottom input */}
             <div className="px-4 pb-4 pt-2">
               <form onSubmit={handleSubmit} className="max-w-[680px] mx-auto">
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="Ask anything"
-                    disabled={isStreaming}
-                    className="w-full rounded-2xl bg-[#2f2f2f] border-none px-5 py-4 pr-14 text-base text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-600 disabled:opacity-50"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isStreaming || !input.trim()}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white flex items-center justify-center disabled:opacity-30 disabled:bg-gray-600 transition-colors"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
-                    </svg>
-                  </button>
+                <div className="relative bg-[#2f2f2f] rounded-full has-[textarea:not([data-single-line])]:rounded-3xl transition-all">
+                  <div className="flex items-end gap-2 px-3 py-2.5">
+                    <button
+                      type="button"
+                      className="flex-shrink-0 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-300"
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                      </svg>
+                    </button>
+                    <textarea
+                      value={input}
+                      onChange={(e) => {
+                        setInput(e.target.value);
+                        // Auto-resize
+                        e.target.style.height = 'auto';
+                        const newHeight = Math.min(e.target.scrollHeight, 200);
+                        e.target.style.height = newHeight + 'px';
+                        // Toggle attribute for styling
+                        if (newHeight > 24) {
+                          e.target.removeAttribute('data-single-line');
+                        } else {
+                          e.target.setAttribute('data-single-line', '');
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSubmit(e);
+                        }
+                      }}
+                      placeholder="Ask anything"
+                      disabled={isStreaming}
+                      rows={1}
+                      data-single-line=""
+                      className="flex-1 bg-transparent border-none px-2 py-1 text-base text-gray-100 placeholder-gray-500 focus:outline-none disabled:opacity-50 resize-none overflow-hidden"
+                      style={{ minHeight: '24px', maxHeight: '200px' }}
+                    />
+                    <button
+                      type="submit"
+                      disabled={isStreaming || !input.trim()}
+                      className="flex-shrink-0 w-8 h-8 rounded-full bg-white flex items-center justify-center disabled:opacity-30 disabled:bg-gray-600 transition-colors"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </form>
             </div>
