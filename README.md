@@ -47,9 +47,6 @@ slm/
     routers/
       chat.py                  # POST /api/chat (SSE streaming)
       conversations.py         # Conversation CRUD endpoints
-    alembic.ini                # Alembic config
-    alembic/                   # Database migrations
-
   frontend/                    # Next.js 14 app
     app/
       layout.tsx               # Root layout (dark theme)
@@ -100,17 +97,6 @@ await db.commit()
 ```
 It works with SQLite, PostgreSQL, MySQL, etc. — you swap the database by changing one connection string.
 
-### Alembic
-**Database migration tool.** When you change your database schema (add a column, rename a table, add a new table), Alembic generates a migration script that applies that change.
-
-Why this matters: in production, your database already has data in it. You can't just drop all tables and recreate them. Alembic lets you evolve the schema incrementally:
-```
-alembic revision --autogenerate -m "add users table"  # generates migration
-alembic upgrade head                                    # applies it
-```
-
-**Does it help connect to AWS RDS?** Not directly — that's just a connection string change. Alembic's job is managing schema changes over time, regardless of where the database lives. Whether it's a local SQLite file or a PostgreSQL instance on RDS, Alembic runs the same migrations.
-
 ### SQLite vs PostgreSQL
 Right now we use **SQLite** (a simple file-based database, `slm_chat.db`). This is perfect for local development — zero setup.
 
@@ -142,7 +128,6 @@ Packages everything (Python, dependencies, model weights, frontend build) into a
 - CRUD endpoints for conversations
 - Sidebar with conversation list (create/rename/delete)
 - Chat messages saved to and loaded from database
-- Alembic migrations initialized
 
 ### Phase 3: Auth (next)
 - Users table + registration/login
