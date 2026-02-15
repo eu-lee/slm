@@ -19,7 +19,7 @@ if ckpt_path is None:
 device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 
 # load checkpoint
-ckpt = torch.load(ckpt_path, map_location=device)
+ckpt = torch.load(ckpt_path, map_location="cpu")
 
 # load tokenizer from trained tokenizer directory (preferred) or from checkpoint metadata
 if os.path.isdir('./tokenizer'):
