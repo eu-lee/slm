@@ -7,18 +7,24 @@ A ~36M parameter GPT chatbot trained on the [TinyChat dataset](https://huggingfa
 ## Architecture
 
 ```
-            Internet
-               |
-         [EC2 t2.micro]
-               |
-    [FastAPI :8000]  <-->  [PostgreSQL (RDS)]
-         |
-    [PyTorch Model in memory ~140MB]
-         |
-    [Serves static Next.js build via /]
+                    Internet
+                       |
+                 [EC2 t2.micro]
+                       |
+              [docker-compose.yml]
+               /               \
+    ┌─────────────────┐  ┌──────────────────┐
+    │  app container   │  │  db container    │
+    │                  │  │                  │
+    │  FastAPI :8000   │──│  PostgreSQL :5432│
+    │  PyTorch model   │  │  Volume: pgdata  │
+    │  Static frontend │  │                  │
+    └─────────────────┘  └──────────────────┘
 ```
 
-FastAPI serves both the API (`/api/*`) and the static frontend build. No Nginx needed (for now).
+**Local dev:** SQLite file (`slm_chat.db`) — zero setup, just run the server.
+
+**Production:** Two Docker containers on the same EC2 instance via docker-compose. FastAPI serves both the API (`/api/*`) and the static frontend build. PostgreSQL runs in its own container with a persistent volume. No external database service needed.
 
 **Stack:** FastAPI (Python) + Next.js 14 (TypeScript/Tailwind) + PostgreSQL, all Dockerized.
 
@@ -98,19 +104,22 @@ await db.commit()
 It works with SQLite, PostgreSQL, MySQL, etc. — you swap the database by changing one connection string.
 
 ### SQLite vs PostgreSQL
-Right now we use **SQLite** (a simple file-based database, `slm_chat.db`). This is perfect for local development — zero setup.
+**Local dev** uses **SQLite** — a simple file (`slm_chat.db`). Zero setup, just run the server.
 
-For production on EC2, we'll switch to **PostgreSQL** (via AWS RDS or a Docker container). The switch is literally one line — changing the database URL from:
+**Production** uses **PostgreSQL** running in a Docker container on the same EC2 instance. No external service (like AWS RDS) needed. The switch is one connection string change:
 ```
-sqlite+aiosqlite:///./slm_chat.db
+Local:  sqlite+aiosqlite:///./slm_chat.db
+Prod:   postgresql+asyncpg://user:pass@db:5432/slm_chat
 ```
-to:
-```
-postgresql+asyncpg://user:pass@rds-hostname:5432/slm_chat
-```
+
+The database schema is created automatically on startup. If the schema changes (e.g. adding a Users table), just delete the DB and restart — no migration tool needed.
 
 ### Docker
-Packages everything (Python, dependencies, model weights, frontend build) into a single container that runs identically everywhere. "Works on my machine" → "works everywhere."
+Two containers managed by docker-compose:
+- **app** — Python, FastAPI, PyTorch model, static frontend build. Everything the server needs in one image.
+- **db** — PostgreSQL with a named volume (`pgdata`) so data survives container restarts.
+
+docker-compose handles networking between them — the app container connects to the db container at `db:5432`.
 
 ---
 
@@ -136,8 +145,8 @@ Packages everything (Python, dependencies, model weights, frontend build) into a
 - Login/register pages on the frontend
 
 ### Phase 4: Deploy
-- Dockerfile (backend + static frontend in one image)
-- docker-compose.yml (backend + PostgreSQL)
+- Dockerfile (backend + model + static frontend in one image)
+- docker-compose.yml (app container + PostgreSQL container with persistent volume)
 - EC2 t2.micro provisioning script
 - Open port 8000, deploy, access via public IP
 
