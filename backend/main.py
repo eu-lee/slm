@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.config import FRONTEND_DIR
 from backend.database import init_db
 from backend.inference.engine import ModelEngine
-from backend.routers import chat, conversations
+from backend.routers import auth, chat, conversations
 
 
 @asynccontextmanager
@@ -30,6 +30,7 @@ app.add_middleware(
 )
 
 # API routes
+app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)
 

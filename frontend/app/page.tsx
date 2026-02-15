@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, FormEvent } from "react";
+import { useAuth } from "./auth";
 
 interface Message {
   id?: number;
@@ -18,6 +19,7 @@ interface Conversation {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function Home() {
+  const { user, token, isGuest, loginAsGuest, logout, loading } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -26,31 +28,54 @@ export default function Home() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showSavePopup, setShowSavePopup] = useState(false);
+  const [pendingGuestMessage, setPendingGuestMessage] = useState<string | null>(null);
+  const [guestDismissed, setGuestDismissed] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const isAuthed = !!token && !isGuest;
+  // Treat as guest if not logged in (no redirect)
+  const isGuestMode = !isAuthed;
+  const hasMessages = messages.length > 0;
+
+  const authHeaders = useCallback((): Record<string, string> => ({
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  }), [token]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Load conversation list
+  // Auto-set guest mode if not logged in (no redirect)
+  useEffect(() => {
+    if (!loading && !token && !isGuest) {
+      loginAsGuest();
+    }
+  }, [loading, token, isGuest, loginAsGuest]);
+
   const loadConversations = useCallback(async () => {
+    if (!isAuthed) return;
     try {
-      const res = await fetch(`${API_URL}/api/conversations`);
+      const res = await fetch(`${API_URL}/api/conversations`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (res.ok) setConversations(await res.json());
     } catch (err) {
       console.error("Failed to load conversations:", err);
     }
-  }, []);
+  }, [isAuthed, token]);
 
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
 
-  // Load messages for a conversation
   async function selectConversation(id: number) {
     setActiveConvId(id);
     try {
-      const res = await fetch(`${API_URL}/api/conversations/${id}`);
+      const res = await fetch(`${API_URL}/api/conversations/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (res.ok) {
         const data = await res.json();
         setMessages(
@@ -66,31 +91,16 @@ export default function Home() {
     }
   }
 
-  // Create new conversation
-  async function createConversation() {
-    try {
-      const res = await fetch(`${API_URL}/api/conversations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: "New Conversation" }),
-      });
-      if (res.ok) {
-        const conv = await res.json();
-        setConversations((prev) => [conv, ...prev]);
-        setActiveConvId(conv.id);
-        setMessages([]);
-      }
-    } catch (err) {
-      console.error("Failed to create conversation:", err);
-    }
+  function newChat() {
+    setActiveConvId(null);
+    setMessages([]);
   }
 
-  // Rename conversation
   async function renameConversation(id: number, title: string) {
     try {
       const res = await fetch(`${API_URL}/api/conversations/${id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({ title }),
       });
       if (res.ok) {
@@ -104,10 +114,12 @@ export default function Home() {
     setEditingId(null);
   }
 
-  // Delete conversation
   async function deleteConversation(id: number) {
     try {
-      await fetch(`${API_URL}/api/conversations/${id}`, { method: "DELETE" });
+      await fetch(`${API_URL}/api/conversations/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
       setConversations((prev) => prev.filter((c) => c.id !== id));
       if (activeConvId === id) {
         setActiveConvId(null);
@@ -118,95 +130,93 @@ export default function Home() {
     }
   }
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    const text = input.trim();
-    if (!text || isStreaming) return;
+  async function readStream(res: Response) {
+    const reader = res.body?.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    if (!reader) throw new Error("No response body");
 
-    // Auto-create conversation if none selected
-    let convId = activeConvId;
-    if (!convId) {
-      try {
-        const res = await fetch(`${API_URL}/api/conversations`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: text.slice(0, 50) }),
-        });
-        if (res.ok) {
-          const conv = await res.json();
-          convId = conv.id;
-          setActiveConvId(conv.id);
-          setConversations((prev) => [conv, ...prev]);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      let currentEvent = "";
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          currentEvent = line.slice(7);
+        } else if (line.startsWith("data: ")) {
+          const data = JSON.parse(line.slice(6));
+          if (currentEvent === "context_cleared") {
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated.splice(updated.length - 1, 0, {
+                role: "system",
+                content: data.message,
+              });
+              return updated;
+            });
+          } else if ("token" in data) {
+            setMessages((prev) => {
+              const updated = [...prev];
+              const last = updated[updated.length - 1];
+              updated[updated.length - 1] = {
+                ...last,
+                content: last.content + data.token,
+              };
+              return updated;
+            });
+          }
+          currentEvent = "";
         }
-      } catch {
-        return;
       }
     }
+  }
 
+  async function sendMessage(text: string) {
     const userMsg: Message = { role: "user", content: text };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setIsStreaming(true);
-
-    // Add placeholder for assistant response
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
-      const res = await fetch(`${API_URL}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          conversation_id: convId,
-        }),
-      });
+      let res: Response;
+
+      if (isGuestMode) {
+        const history = messages
+          .filter((m) => m.role !== "system")
+          .map((m) => ({ role: m.role, content: m.content }));
+        res = await fetch(`${API_URL}/api/chat/guest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text, history }),
+        });
+      } else {
+        let convId = activeConvId;
+        if (!convId) {
+          const convRes = await fetch(`${API_URL}/api/conversations`, {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({ title: text.slice(0, 50) }),
+          });
+          if (!convRes.ok) throw new Error("Failed to create conversation");
+          const conv = await convRes.json();
+          convId = conv.id;
+          setActiveConvId(conv.id);
+          setConversations((prev) => [conv, ...prev]);
+        }
+        res = await fetch(`${API_URL}/api/chat`, {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({ message: text, conversation_id: convId }),
+        });
+      }
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      if (!reader) throw new Error("No response body");
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        let currentEvent = "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7);
-          } else if (line.startsWith("data: ")) {
-            const data = JSON.parse(line.slice(6));
-            if (currentEvent === "context_cleared") {
-              setMessages((prev) => {
-                const updated = [...prev];
-                updated.splice(updated.length - 1, 0, {
-                  role: "system",
-                  content: data.message,
-                });
-                return updated;
-              });
-            } else if ("token" in data) {
-              setMessages((prev) => {
-                const updated = [...prev];
-                const last = updated[updated.length - 1];
-                updated[updated.length - 1] = {
-                  ...last,
-                  content: last.content + data.token,
-                };
-                return updated;
-              });
-            }
-            currentEvent = "";
-          }
-        }
-      }
+      await readStream(res);
     } catch (err) {
       console.error("Chat error:", err);
       setMessages((prev) => {
@@ -220,170 +230,295 @@ export default function Home() {
       });
     } finally {
       setIsStreaming(false);
-      loadConversations(); // Refresh sidebar order
+      if (isAuthed) loadConversations();
     }
   }
 
-  return (
-    <div className="flex h-screen">
-      {/* Sidebar */}
-      <div
-        className={`${
-          sidebarOpen ? "w-64" : "w-0"
-        } flex-shrink-0 bg-gray-900 border-r border-gray-800 transition-all duration-200 overflow-hidden`}
-      >
-        <div className="flex flex-col h-full w-64">
-          {/* Sidebar header */}
-          <div className="flex items-center justify-between px-3 py-3 border-b border-gray-800">
-            <span className="text-sm font-medium text-gray-300">Conversations</span>
-            <button
-              onClick={createConversation}
-              className="text-gray-400 hover:text-white text-lg leading-none px-1"
-              title="New conversation"
-            >
-              +
-            </button>
-          </div>
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || isStreaming) return;
 
-          {/* Conversation list */}
-          <div className="flex-1 overflow-y-auto">
-            {conversations.length === 0 && (
-              <div className="px-3 py-4 text-xs text-gray-600">
-                No conversations yet
-              </div>
-            )}
-            {conversations.map((conv) => (
-              <div
-                key={conv.id}
-                className={`group flex items-center gap-1 px-3 py-2 cursor-pointer text-sm border-b border-gray-800/50 ${
-                  conv.id === activeConvId
-                    ? "bg-gray-800 text-white"
-                    : "text-gray-400 hover:bg-gray-800/50 hover:text-gray-200"
-                }`}
-                onClick={() => selectConversation(conv.id)}
+    // Guest first message: show save popup
+    if (isGuestMode && messages.length === 0 && !guestDismissed) {
+      setPendingGuestMessage(text);
+      setShowSavePopup(true);
+      return;
+    }
+
+    await sendMessage(text);
+  }
+
+  function handleGuestContinue() {
+    setShowSavePopup(false);
+    setGuestDismissed(true);
+    if (pendingGuestMessage) {
+      sendMessage(pendingGuestMessage);
+      setPendingGuestMessage(null);
+    }
+  }
+
+  if (loading) return null;
+
+  return (
+    <div className="flex h-screen bg-[#212121]">
+      {/* Save Chat Popup */}
+      {showSavePopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-[#2f2f2f] rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl">
+            <h2 className="text-lg font-semibold text-gray-100 mb-2">Save your chats?</h2>
+            <p className="text-sm text-gray-400 mb-5">
+              Guest chats are not saved and will be lost when you close the browser. Log in or create an account to keep your conversation history.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => { window.location.href = "/login"; }}
+                className="w-full rounded-xl bg-white text-black px-4 py-2.5 text-sm font-medium hover:bg-gray-200 transition-colors"
               >
-                {editingId === conv.id ? (
-                  <input
-                    className="flex-1 bg-gray-700 text-white text-sm px-1 py-0.5 rounded outline-none"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") renameConversation(conv.id, editTitle);
-                      if (e.key === "Escape") setEditingId(null);
-                    }}
-                    onBlur={() => renameConversation(conv.id, editTitle)}
-                    onClick={(e) => e.stopPropagation()}
-                    autoFocus
-                  />
-                ) : (
-                  <>
-                    <span className="flex-1 truncate">{conv.title}</span>
-                    <div className="hidden group-hover:flex items-center gap-1">
-                      <button
-                        className="text-gray-500 hover:text-gray-300 text-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingId(conv.id);
-                          setEditTitle(conv.title);
-                        }}
-                        title="Rename"
-                      >
-                        &#9998;
-                      </button>
-                      <button
-                        className="text-gray-500 hover:text-red-400 text-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteConversation(conv.id);
-                        }}
-                        title="Delete"
-                      >
-                        &times;
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            ))}
+                Log in or Register
+              </button>
+              <button
+                onClick={handleGuestContinue}
+                className="w-full rounded-xl bg-transparent border border-gray-600 text-gray-300 px-4 py-2.5 text-sm font-medium hover:bg-gray-700 transition-colors"
+              >
+                Continue without saving
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Main chat area */}
-      <div className="flex flex-col flex-1 min-w-0">
-        {/* Header */}
-        <header className="flex items-center px-4 py-3 border-b border-gray-800">
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="text-gray-400 hover:text-white mr-3 text-lg leading-none"
-          >
-            &#9776;
-          </button>
-          <h1 className="text-lg font-semibold text-gray-200">SLM Chat</h1>
-          <span className="ml-2 text-xs text-gray-500">36M params</span>
-        </header>
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
-          {messages.length === 0 && (
-            <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-              {activeConvId
-                ? "No messages yet"
-                : "Create or select a conversation to start chatting"}
-            </div>
-          )}
-          {messages.map((msg, i) =>
-            msg.role === "system" ? (
-              <div key={i} className="flex justify-center">
-                <div className="text-xs text-yellow-500 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-3 py-1.5">
-                  {msg.content}
-                </div>
-              </div>
-            ) : (
-              <div
-                key={i}
-                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+      {/* Sidebar (authed only) */}
+      {isAuthed && (
+        <div
+          className={`${
+            sidebarOpen ? "w-[260px]" : "w-0"
+          } flex-shrink-0 bg-[#171717] transition-all duration-200 overflow-hidden`}
+        >
+          <div className="flex flex-col h-full w-[260px]">
+            <div className="px-3 pt-3 pb-1">
+              <button
+                onClick={() => { newChat(); }}
+                className="flex items-center gap-2 w-full px-3 py-2.5 rounded-lg text-sm text-gray-300 hover:bg-[#2f2f2f] transition-colors"
               >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+                </svg>
+                New chat
+              </button>
+            </div>
+
+            <div className="px-3 pt-4 pb-1">
+              <span className="text-xs font-medium text-gray-500 px-3">Your chats</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-3">
+              {conversations.length === 0 && (
+                <div className="px-3 py-3 text-xs text-gray-600">
+                  No conversations yet
+                </div>
+              )}
+              {conversations.map((conv) => (
                 <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                    msg.role === "user"
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-800 text-gray-100"
+                  key={conv.id}
+                  className={`group flex items-center gap-1 px-3 py-2 rounded-lg cursor-pointer text-sm mb-0.5 ${
+                    conv.id === activeConvId
+                      ? "bg-[#2f2f2f] text-white"
+                      : "text-gray-400 hover:bg-[#2f2f2f] hover:text-gray-200"
                   }`}
+                  onClick={() => selectConversation(conv.id)}
                 >
-                  {msg.content || (
-                    <span className="inline-block w-2 h-4 bg-gray-500 animate-pulse rounded-sm" />
+                  {editingId === conv.id ? (
+                    <input
+                      className="flex-1 bg-[#3f3f3f] text-white text-sm px-2 py-0.5 rounded outline-none"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") renameConversation(conv.id, editTitle);
+                        if (e.key === "Escape") setEditingId(null);
+                      }}
+                      onBlur={() => renameConversation(conv.id, editTitle)}
+                      onClick={(e) => e.stopPropagation()}
+                      autoFocus
+                    />
+                  ) : (
+                    <>
+                      <span className="flex-1 truncate">{conv.title}</span>
+                      <div className="hidden group-hover:flex items-center gap-1">
+                        <button
+                          className="text-gray-500 hover:text-gray-300 text-xs p-0.5"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingId(conv.id);
+                            setEditTitle(conv.title);
+                          }}
+                          title="Rename"
+                        >
+                          &#9998;
+                        </button>
+                        <button
+                          className="text-gray-500 hover:text-red-400 text-xs p-0.5"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteConversation(conv.id);
+                          }}
+                          title="Delete"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
-              </div>
-            )
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+              ))}
+            </div>
 
-        {/* Input */}
-        <form
-          onSubmit={handleSubmit}
-          className="border-t border-gray-800 px-4 py-3"
-        >
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type a message..."
-              disabled={isStreaming}
-              className="flex-1 rounded-xl bg-gray-800 border border-gray-700 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
-            />
+            {/* User info at bottom */}
+            <div className="border-t border-[#2f2f2f] px-4 py-3 flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-xs font-medium text-white flex-shrink-0">
+                {user?.username?.slice(0, 2).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-gray-200 truncate">{user?.username}</div>
+              </div>
+              <button
+                onClick={logout}
+                className="text-xs text-gray-500 hover:text-red-400 transition-colors flex-shrink-0"
+              >
+                Log out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Guest bottom-left login panel */}
+      {isGuestMode && (
+        <div className="fixed bottom-0 left-0 z-10 px-4 py-3 flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-[#171717] rounded-xl px-4 py-2.5">
+            <span className="text-sm text-gray-500">Not logged in</span>
+            <span className="text-gray-700">|</span>
             <button
-              type="submit"
-              disabled={isStreaming || !input.trim()}
-              className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 transition-colors"
+              onClick={() => { window.location.href = "/login"; }}
+              className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
             >
-              Send
+              Log in
             </button>
           </div>
-        </form>
+        </div>
+      )}
+
+      {/* Main area */}
+      <div className="flex flex-col flex-1 min-w-0">
+        {/* Top bar */}
+        <header className="flex items-center h-12 px-4">
+          {isAuthed && (
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="text-gray-400 hover:text-white mr-3"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" />
+              </svg>
+            </button>
+          )}
+          <span className="text-base font-medium text-gray-200">SLM Chat</span>
+        </header>
+
+        {/* Chat area */}
+        {!hasMessages ? (
+          /* Empty state: centered prompt */
+          <div className="flex-1 flex flex-col items-center justify-center px-4">
+            <h2 className="text-[28px] font-semibold text-gray-100 mb-8">
+              What&apos;s on your mind today?
+            </h2>
+            <form onSubmit={handleSubmit} className="w-full max-w-[680px]">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Ask anything"
+                  disabled={isStreaming}
+                  className="w-full rounded-2xl bg-[#2f2f2f] border-none px-5 py-4 pr-14 text-base text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-600 disabled:opacity-50"
+                />
+                <button
+                  type="submit"
+                  disabled={isStreaming || !input.trim()}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white flex items-center justify-center disabled:opacity-30 disabled:bg-gray-600 transition-colors"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
+                  </svg>
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : (
+          /* Active chat */
+          <>
+            <div className="flex-1 overflow-y-auto">
+              <div className="max-w-[680px] mx-auto px-4 py-6 space-y-6">
+                {messages.map((msg, i) =>
+                  msg.role === "system" ? (
+                    <div key={i} className="flex justify-center">
+                      <div className="text-xs text-yellow-500 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-3 py-1.5">
+                        {msg.content}
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : ""}`}>
+                      {msg.role === "assistant" && (
+                        <div className="w-7 h-7 rounded-full bg-[#19c37d] flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="white" stroke="none">
+                            <path d="M22.2819 9.8211a5.9847 5.9847 0 00-.5157-4.9108 6.0462 6.0462 0 00-6.5098-2.9A6.0651 6.0651 0 004.9807 4.1818a5.9847 5.9847 0 00-3.9977 2.9 6.0462 6.0462 0 00.7427 7.0966 5.98 5.98 0 00.511 4.9107 6.051 6.051 0 006.5146 2.9001A5.9847 5.9847 0 0013.2599 24a6.0557 6.0557 0 005.7718-4.2058 5.9894 5.9894 0 003.9977-2.9001 6.0557 6.0557 0 00-.7475-7.0729z" />
+                          </svg>
+                        </div>
+                      )}
+                      <div
+                        className={`text-sm leading-relaxed max-w-[85%] ${
+                          msg.role === "user"
+                            ? "bg-[#2f2f2f] text-gray-100 rounded-2xl px-4 py-2.5"
+                            : "text-gray-100"
+                        }`}
+                      >
+                        {msg.content || (
+                          <span className="inline-block w-2 h-4 bg-gray-500 animate-pulse rounded-sm" />
+                        )}
+                      </div>
+                    </div>
+                  )
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+
+            {/* Bottom input */}
+            <div className="px-4 pb-4 pt-2">
+              <form onSubmit={handleSubmit} className="max-w-[680px] mx-auto">
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    placeholder="Ask anything"
+                    disabled={isStreaming}
+                    className="w-full rounded-2xl bg-[#2f2f2f] border-none px-5 py-4 pr-14 text-base text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-600 disabled:opacity-50"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isStreaming || !input.trim()}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white flex items-center justify-center disabled:opacity-30 disabled:bg-gray-600 transition-colors"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
+                    </svg>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

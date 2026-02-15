@@ -14,11 +14,11 @@ A ~36M parameter GPT chatbot trained on the [TinyChat dataset](https://huggingfa
               [docker-compose.yml]
                /               \
     ┌─────────────────┐  ┌──────────────────┐
-    │  app container   │  │  db container    │
-    │                  │  │                  │
-    │  FastAPI :8000   │──│  PostgreSQL :5432│
-    │  PyTorch model   │  │  Volume: pgdata  │
-    │  Static frontend │  │                  │
+    │  app container  │  │  db container    │
+    │                 │  │                  │
+    │  FastAPI :8000  │──│  PostgreSQL :5432│
+    │  PyTorch model  │  │  Volume: pgdata  │
+    │  Static frontend│  │                  │
     └─────────────────┘  └──────────────────┘
 ```
 
