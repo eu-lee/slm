@@ -7,19 +7,26 @@ A ~36M parameter GPT chatbot trained on the [TinyChat dataset](https://huggingfa
 ## Architecture
 
 ```
-                    Internet
-                       |
-                 [EC2 t2.micro]
-                       |
-              [docker-compose.yml]
-               /               \
-    ┌─────────────────┐  ┌──────────────────┐
-    │  app container  │  │  db container    │
-    │                 │  │                  │
-    │  FastAPI :8000  │──│  PostgreSQL :5432│
-    │  PyTorch model  │  │  Volume: pgdata  │
-    │  Static frontend│  │                  │
-    └─────────────────┘  └──────────────────┘
+               Internet
+                   |
+        ┌──────────────────────┐
+        │  Vercel Frontend     │
+        │  (static build)      │
+        └──────────────────────┘
+                   |
+                   v
+        ┌──────────────────────┐
+        │   EC2 Instance       │
+        │  docker-compose      │
+        └──────────────────────┘
+               |          |
+               v          v
+     ┌─────────────────┐   ┌──────────────────┐
+     │ FastAPI API     │   │ PostgreSQL DB    │
+     │ PyTorch Model   │   │ Volume: pgdata   │
+     │ Exposed :8000   │   │ Exposed :5432    │
+     └─────────────────┘   └──────────────────┘
+
 ```
 
 **Local dev:** SQLite file (`slm_chat.db`) — zero setup, just run the server.
