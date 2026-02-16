@@ -147,10 +147,11 @@ export default function Home() {
     }
   }
 
-  async function readStream(res: Response) {
+  async function readStream(res: Response): Promise<boolean> {
     const reader = res.body?.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let hitContextLimit = false;
     if (!reader) throw new Error("No response body");
 
     while (true) {
@@ -167,15 +168,7 @@ export default function Home() {
         } else if (line.startsWith("data: ")) {
           const data = JSON.parse(line.slice(6));
           if (currentEvent === "context_cleared") {
-            setContextExhausted(true);
-            setMessages((prev) => {
-              const updated = [...prev];
-              updated.splice(updated.length - 1, 0, {
-                role: "system",
-                content: "Context window reached. Please start a new chat.",
-              });
-              return updated;
-            });
+            hitContextLimit = true;
           } else if ("token" in data) {
             setMessages((prev) => {
               const updated = [...prev];
@@ -191,6 +184,7 @@ export default function Home() {
         }
       }
     }
+    return hitContextLimit;
   }
 
   async function sendMessage(text: string) {
@@ -234,7 +228,14 @@ export default function Home() {
       }
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      await readStream(res);
+      const hitLimit = await readStream(res);
+      if (hitLimit) {
+        setContextExhausted(true);
+        setMessages((prev) => [
+          ...prev,
+          { role: "system", content: "Context window reached. Please start a new chat." },
+        ]);
+      }
     } catch (err) {
       console.error("Chat error:", err);
       setMessages((prev) => {

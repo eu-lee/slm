@@ -9,6 +9,8 @@ venv/
 .venv/
 .env
 
+.DS_Store
+
 
 # Model weights and data
 *.pth
