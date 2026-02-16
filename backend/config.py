@@ -1,10 +1,17 @@
+import os
 from pathlib import Path
 
 # Project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Frontend static build directory
-FRONTEND_DIR = PROJECT_ROOT / "frontend" / "out"
+# Database
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./slm_chat.db")
+
+# Auth
+SECRET_KEY = os.getenv("SECRET_KEY", "slm-chat-secret-change-in-production")
+
+# CORS
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 
 # Model defaults
 DEFAULT_MAX_NEW_TOKENS = 60

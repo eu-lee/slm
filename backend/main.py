@@ -2,9 +2,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from backend.config import FRONTEND_DIR
+from backend.config import CORS_ORIGINS
 from backend.database import init_db
 from backend.inference.engine import ModelEngine
 from backend.routers import auth, chat, conversations
@@ -21,10 +20,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SLM Chat", lifespan=lifespan)
 
-# CORS for local dev (Next.js dev server on :3000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -39,8 +37,3 @@ app.include_router(conversations.router)
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
-
-
-# Serve static frontend build (if it exists)
-if FRONTEND_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

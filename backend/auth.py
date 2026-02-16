@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.models import User
 
-SECRET_KEY = "slm-chat-secret-change-in-production"
+from backend.config import SECRET_KEY
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 

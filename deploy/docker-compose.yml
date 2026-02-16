@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-slm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-slm_chat}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-slm} -d ${POSTGRES_DB:-slm_chat}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-slm}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-slm_chat}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

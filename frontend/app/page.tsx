@@ -29,10 +29,9 @@ export default function Home() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [showSavePopup, setShowSavePopup] = useState(false);
-  const [guestDismissed, setGuestDismissed] = useState(false);
   const [contextExhausted, setContextExhausted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isAuthed = !!token && !isGuest;
   const isGuestMode = !isAuthed;
@@ -47,6 +46,14 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Reset textarea size when input is cleared
+  useEffect(() => {
+    if (!input && textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.setAttribute('data-single-line', '');
+    }
+  }, [input]);
+
   // Auto-set guest mode if not logged in (no redirect)
   useEffect(() => {
     if (!loading && !token && !isGuest) {
@@ -60,7 +67,6 @@ export default function Home() {
       setConversations([]);
       setActiveConvId(null);
       setMessages([]);
-      setGuestDismissed(false);
     }
   }, [isGuestMode]);
 
@@ -244,9 +250,6 @@ export default function Home() {
       setIsStreaming(false);
       if (isAuthed) loadConversations();
       // Show save popup after first guest reply (with delay)
-      if (isGuestMode && !guestDismissed && !showSavePopup) {
-        setTimeout(() => setShowSavePopup(true), 3000);
-      }
     }
   }
 
@@ -257,41 +260,10 @@ export default function Home() {
     await sendMessage(text);
   }
 
-  function handleGuestDismiss() {
-    setShowSavePopup(false);
-    setGuestDismissed(true);
-  }
-
   if (loading) return null;
 
   return (
     <div className="flex h-screen bg-[#212121]">
-      {/* Save Chat Popup */}
-      {showSavePopup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-[#2f2f2f] rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl">
-            <h2 className="text-lg font-semibold text-gray-100 mb-2">Save your chats?</h2>
-            <p className="text-sm text-gray-400 mb-5">
-              Guest chats are not saved and will be lost when you close the browser. Log in or create an account to keep your conversation history.
-            </p>
-            <div className="flex flex-col gap-2">
-              <button
-                onClick={() => { window.location.href = "/login"; }}
-                className="w-full rounded-xl bg-white text-black px-4 py-2.5 text-sm font-medium hover:bg-gray-200 transition-colors"
-              >
-                Log in or Register
-              </button>
-              <button
-                onClick={handleGuestDismiss}
-                className="w-full rounded-xl bg-transparent border border-gray-600 text-gray-300 px-4 py-2.5 text-sm font-medium hover:bg-gray-700 transition-colors"
-              >
-                Continue without saving
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Sidebar (authed only) */}
       {isAuthed && (
         <div
@@ -464,6 +436,7 @@ export default function Home() {
                     </svg>
                   </button>
                   <textarea
+                    ref={textareaRef}
                     value={input}
                     onChange={(e) => {
                       setInput(e.target.value);
@@ -554,6 +527,7 @@ export default function Home() {
                       </svg>
                     </button>
                     <textarea
+                      ref={textareaRef}
                       value={input}
                       onChange={(e) => {
                         setInput(e.target.value);
