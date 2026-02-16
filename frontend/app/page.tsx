@@ -31,6 +31,7 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showSavePopup, setShowSavePopup] = useState(false);
   const [guestDismissed, setGuestDismissed] = useState(false);
+  const [contextExhausted, setContextExhausted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const isAuthed = !!token && !isGuest;
@@ -103,6 +104,7 @@ export default function Home() {
   function newChat() {
     setActiveConvId(null);
     setMessages([]);
+    setContextExhausted(false);
   }
 
   async function renameConversation(id: number, title: string) {
@@ -159,11 +161,12 @@ export default function Home() {
         } else if (line.startsWith("data: ")) {
           const data = JSON.parse(line.slice(6));
           if (currentEvent === "context_cleared") {
+            setContextExhausted(true);
             setMessages((prev) => {
               const updated = [...prev];
               updated.splice(updated.length - 1, 0, {
                 role: "system",
-                content: data.message,
+                content: "Context window reached. Please start a new chat.",
               });
               return updated;
             });
@@ -416,13 +419,9 @@ export default function Home() {
             >
               {/* Default: logo icon */}
               <SlmIcon size={28} className="group-hover:hidden" />
-              {/* Hover: new chat pencil inside squircle */}
-              <svg className="hidden group-hover:block text-gray-400" width="28" height="28" viewBox="0 0 640 640" fill="none">
-                <rect width="640" height="640" rx="128" fill="none" stroke="currentColor" strokeWidth="32" />
-                <g transform="translate(180, 180) scale(11.7)">
-                  <path d="M12 20h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </g>
+              {/* Hover: new chat pencil icon */}
+              <svg className="hidden group-hover:block text-gray-400" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
               </svg>
             </button>
           )}
@@ -575,8 +574,8 @@ export default function Home() {
                           handleSubmit(e);
                         }
                       }}
-                      placeholder="Ask anything"
-                      disabled={isStreaming}
+                      placeholder={contextExhausted ? "Context limit reached — start a new chat" : "Ask anything"}
+                      disabled={isStreaming || contextExhausted}
                       rows={1}
                       data-single-line=""
                       className="flex-1 bg-transparent border-none px-2 py-1 text-base text-gray-100 placeholder-gray-500 focus:outline-none disabled:opacity-50 resize-none overflow-hidden"
@@ -584,7 +583,7 @@ export default function Home() {
                     />
                     <button
                       type="submit"
-                      disabled={isStreaming || !input.trim()}
+                      disabled={isStreaming || contextExhausted || !input.trim()}
                       className="flex-shrink-0 w-8 h-8 rounded-full bg-white flex items-center justify-center disabled:opacity-30 disabled:bg-gray-600 transition-colors"
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
