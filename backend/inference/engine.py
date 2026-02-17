@@ -169,7 +169,7 @@ class ModelEngine:
         for msg in history:
             if msg["role"] == "user":
                 hist_toks += self.tokenizer.encode(
-                    f"<|user|> {msg['content']} <|assistant|>", add_special_tokens=False
+                    f"<|user|> {msg['content']}\n", add_special_tokens=False
                 )
             else:
                 hist_toks += self.tokenizer.encode(
@@ -183,7 +183,7 @@ class ModelEngine:
 
         # Add current user message
         toks = hist_toks + self.tokenizer.encode(
-            f"<|user|> {message} <|assistant|>", add_special_tokens=False
+            f"<|user|> {message}\n<|assistant|>", add_special_tokens=False
         )
         return toks, history_cleared
 
