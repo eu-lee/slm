@@ -1,6 +1,6 @@
 # SLM (Small Language Model)
 
-A ~36M parameter GPT chatbot trained on the [TinyChat dataset](https://huggingface.co/datasets/starhopp3r/TinyChat), deployed as a full-stack ChatGPT-style web app.
+A ~36M parameter GPT chatbot trained on the [TinyChat dataset](https://huggingface.co/datasets/starhopp3r/TinyChat), deployed as a full-stack ChatGPT-style [web app](https://eugpt.chat).
 
 ## Architecture
 
@@ -21,7 +21,7 @@ Vercel (CDN)                         EC2 Instance
 
 ## Stack
 
-- **Model:** 6-layer transformer, 8 attention heads, 512 embedding dim, 384-token context window
+- **Model:** 6-layer transformer, 8 attention heads, 512 embedding dim, 16,387 vocab size, 384-token context window
 - **Backend:** FastAPI, PyTorch (CPU inference), SQLAlchemy async, JWT auth
 - **Frontend:** Next.js 14, TypeScript, Tailwind CSS
 - **Infra:** Docker Compose on EC2, Caddy (auto HTTPS), PostgreSQL, Vercel
