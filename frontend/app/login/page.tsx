@@ -54,7 +54,7 @@ export default function LoginPage() {
     <div className="flex items-center justify-center min-h-screen bg-[#212121]">
       <div className="w-full max-w-sm mx-4">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-semibold text-gray-100">SLM Chat</h1>
+          <h1 className="text-3xl font-semibold text-gray-100">EuGPT</h1>
           <p className="text-sm text-gray-500 mt-2">36M parameter language model</p>
         </div>
 

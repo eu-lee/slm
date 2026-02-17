@@ -1,4 +1,4 @@
-export default function SlmIcon({
+export default function EugptIcon({
   size = 24,
   className = "",
   squircle = false,

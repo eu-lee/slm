@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, FormEvent } from "react";
 import { useAuth } from "./auth";
-import SlmIcon from "./icons/slm";
+import EugptIcon from "./icons/eugpt";
 
 interface Message {
   id?: number;
@@ -388,17 +388,17 @@ export default function Home() {
             <button
               onClick={hasMessages ? newChat : undefined}
               className="group mr-2 flex-shrink-0"
-              title={hasMessages ? "New chat" : "SLM Chat"}
+              title={hasMessages ? "New chat" : "EuGPT"}
             >
               {/* Default: logo icon */}
-              <SlmIcon size={28} className="group-hover:hidden" />
+              <EugptIcon size={28} className="group-hover:hidden" />
               {/* Hover: new chat pencil icon */}
               <svg className="hidden group-hover:block text-gray-400" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
               </svg>
             </button>
           )}
-          <span className="text-base font-medium text-gray-200">SLM Chat</span>
+          <span className="text-base font-medium text-gray-200">EuGPT</span>
           {/* Guest: auth buttons on the right */}
           {isGuestMode && (
             <div className="ml-auto flex items-center gap-2">
@@ -493,7 +493,7 @@ export default function Home() {
                   ) : (
                     <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : ""}`}>
                       {msg.role === "assistant" && (
-                        <SlmIcon size={28} className="flex-shrink-0 mt-0.5" />
+                        <EugptIcon size={28} className="flex-shrink-0 mt-0.5" />
                       )}
                       <div
                         className={`text-sm leading-relaxed max-w-[85%] ${
