@@ -24,7 +24,7 @@ Vercel (CDN)                         EC2 Instance
 - **Model:** 6-layer transformer, 8 attention heads, 512 embedding dim, 16,387 vocab size, 384-token context window
 - **Backend:** FastAPI, PyTorch (CPU inference), SQLAlchemy async, JWT auth
 - **Frontend:** Next.js 14, TypeScript, Tailwind CSS
-- **Infra:** Docker Compose on EC2, Caddy (auto HTTPS), PostgreSQL, Vercel
+- **Infra:** Docker Compose on EC2, Caddy (auto HTTPS), PostgreSQL, Vercel, GitHub Actions CI/CD
 
 ## Project Structure
 
@@ -59,6 +59,8 @@ slm/
     Dockerfile                 # Python 3.11 + CPU PyTorch
     docker-compose.yml         # app + db + caddy
     Caddyfile                  # Auto HTTPS reverse proxy
+  .github/workflows/
+    deploy.yml                 # Auto-deploy backend to EC2 on push
 ```
 
 ## Running Locally

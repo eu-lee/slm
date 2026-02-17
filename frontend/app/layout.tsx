@@ -6,7 +6,6 @@ import { AuthProvider } from "./auth";
 export const metadata: Metadata = {
   title: "EuGPT",
   description: "Chat with a 36M parameter language model",
-  icons: { icon: "/eugpt-icon.svg" },
 };
 
 export default function RootLayout({
