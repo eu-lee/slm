@@ -30,10 +30,14 @@ Vercel (CDN)                         EC2 Instance
 
 ```
 slm/
-  model/
-    checkpoints/               # Model weights
-    tokenizer/                 # Custom BPE tokenizer (16,387 tokens)
-    train.py                   # Training script
+  model/                         # Training only (not deployed)
+    train.py                     # Training script
+    token_generator.py           # BPE tokenizer training
+    loader.py                    # Data loading
+  models/                        # Inference artifacts (gitignored)
+    eugpt-36m/
+      checkpoint.pth             # Model weights
+      tokenizer/                 # Custom BPE tokenizer (16,387 tokens)
   backend/
     main.py                    # FastAPI entrypoint
     config.py                  # Env-based configuration
