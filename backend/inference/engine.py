@@ -13,8 +13,8 @@ from transformers import GPT2TokenizerFast
 
 
 # Resolve paths relative to the model directory
-BASE_DIR = Path(__file__).resolve().parent.parent.parent / "model"
-CKPT_PATH = BASE_DIR / "checkpoints" / "final_model_checkpoint.pth"
+BASE_DIR = Path(__file__).resolve().parent.parent.parent / "models" / "eugpt-36m"
+CKPT_PATH = BASE_DIR / "checkpoint.pth"
 TOKENIZER_DIR = BASE_DIR / "tokenizer"
 
 

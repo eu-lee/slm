@@ -19,9 +19,7 @@ venv/
 *.npy
 *.h5
 *.model
-model/tokenizer/
-model/checkpoints/
-model/tokenizer/processed_data/
+models/
 
 # Database
 *.db

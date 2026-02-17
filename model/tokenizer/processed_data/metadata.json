@@ -1,0 +1,6 @@
+{
+  "total_chunks": 4353240,
+  "block_size": 384,
+  "vocab_size": 16384,
+  "avg_tokens_per_chunk": 35.68102034346831
+}
