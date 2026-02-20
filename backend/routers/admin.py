@@ -90,6 +90,55 @@ async def admin_users(db: AsyncSession = Depends(get_db)):
     ]
 
 
+@router.get("/users/{user_id}/conversations", dependencies=[Depends(verify_admin_key)])
+async def admin_user_conversations(user_id: int, db: AsyncSession = Depends(get_db)):
+    """Conversations for a specific user."""
+    convos_q = (
+        select(
+            Conversation.id,
+            Conversation.title,
+            func.count(Message.id).label("message_count"),
+            Conversation.created_at,
+            Conversation.updated_at,
+        )
+        .where(Conversation.user_id == user_id)
+        .outerjoin(Message, Message.conversation_id == Conversation.id)
+        .group_by(Conversation.id)
+        .order_by(Conversation.updated_at.desc())
+    )
+    rows = (await db.execute(convos_q)).all()
+    return [
+        {
+            "id": r.id,
+            "title": r.title,
+            "message_count": r.message_count,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/conversations/{conversation_id}/messages", dependencies=[Depends(verify_admin_key)])
+async def admin_conversation_messages(conversation_id: int, db: AsyncSession = Depends(get_db)):
+    """Messages for a specific conversation."""
+    msgs_q = (
+        select(Message.id, Message.role, Message.content, Message.created_at)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at)
+    )
+    rows = (await db.execute(msgs_q)).all()
+    return [
+        {
+            "id": r.id,
+            "role": r.role,
+            "content": r.content,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
 @router.get("/conversations", dependencies=[Depends(verify_admin_key)])
 async def admin_conversations(
     limit: int = 50, db: AsyncSession = Depends(get_db)
