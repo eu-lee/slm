@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import ADMIN_API_KEY
@@ -61,7 +61,7 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
 
 @router.get("/users", dependencies=[Depends(verify_admin_key)])
 async def admin_users(db: AsyncSession = Depends(get_db)):
-    """All users with per-user stats: conversations count, messages count, last active."""
+    """All users with per-user stats: conversations, messages, generations, last active."""
     users_q = (
         select(
             User.id,
@@ -69,6 +69,9 @@ async def admin_users(db: AsyncSession = Depends(get_db)):
             User.created_at,
             func.count(func.distinct(Conversation.id)).label("conversations_count"),
             func.count(Message.id).label("messages_count"),
+            func.count(
+                case((Message.role == "assistant", Message.id))
+            ).label("generations_count"),
             func.max(Message.created_at).label("last_active"),
         )
         .outerjoin(Conversation, Conversation.user_id == User.id)
@@ -84,6 +87,7 @@ async def admin_users(db: AsyncSession = Depends(get_db)):
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "conversations_count": r.conversations_count,
             "messages_count": r.messages_count,
+            "generations_count": r.generations_count or 0,
             "last_active": r.last_active.isoformat() if r.last_active else None,
         }
         for r in rows

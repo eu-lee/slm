@@ -51,6 +51,17 @@ def truncate(text: str, length: int = 80) -> str:
     return text[:length] + "…" if len(text) > length else text
 
 
+# ── Sort keys for Overview table ─────────────────────────────────────────────
+
+SORT_KEYS = {
+    "messages": ("messages_count", True),
+    "chats": ("conversations_count", True),
+    "generations": ("generations_count", True),
+    "id": ("id", False),
+}
+SORT_ORDER = list(SORT_KEYS.keys())  # messages, chats, generations, id
+
+
 # ── Conversation Detail Screen ───────────────────────────────────────────────
 
 class ConversationDetailScreen(ModalScreen):
@@ -58,10 +69,11 @@ class ConversationDetailScreen(ModalScreen):
         Binding("escape", "pop_screen", "Back"),
     ]
 
-    def __init__(self, client: httpx.Client, conversation: dict) -> None:
+    def __init__(self, client: httpx.Client, conversation: dict, username: str) -> None:
         super().__init__()
         self.client = client
         self.conversation = conversation
+        self.username = username
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -70,7 +82,7 @@ class ConversationDetailScreen(ModalScreen):
             yield Static(
                 f"[b]Conversation #{c.get('id', '?')}[/b]  —  "
                 f"[cyan]{c.get('title') or 'Untitled'}[/cyan]\n"
-                f"User: [green]{c.get('username', '?')}[/green]   "
+                f"User: [green]{self.username}[/green]   "
                 f"Messages: {c.get('message_count', '?')}   "
                 f"Created: [dim]{fmt_dt(c.get('created_at'))}[/dim]   "
                 f"Updated: [dim]{fmt_dt(c.get('updated_at'))}[/dim]",
@@ -125,8 +137,9 @@ class UserDetailScreen(ModalScreen):
                 f"[b]User: [green]{u['username']}[/green][/b]   ID: {u['id']}\n"
                 f"Joined: [cyan]{fmt_dt(u.get('created_at'))}[/cyan]   "
                 f"Last active: [yellow]{fmt_dt(u.get('last_active'))}[/yellow]   "
-                f"Conversations: {u.get('conversations_count', 0)}   "
-                f"Messages: {u.get('messages_count', 0)}",
+                f"Chats: {u.get('conversations_count', 0)}   "
+                f"Messages: {u.get('messages_count', 0)}   "
+                f"Generations: {u.get('generations_count', 0)}",
                 id="user-header",
             )
             yield Label("[dim]Conversations:[/dim]")
@@ -164,8 +177,9 @@ class UserDetailScreen(ModalScreen):
             return
         row_idx = table.cursor_row
         convo = self._conversations[row_idx]
-        convo["username"] = self.user["username"]
-        self.app.push_screen(ConversationDetailScreen(self.client, convo))
+        self.app.push_screen(
+            ConversationDetailScreen(self.client, convo, self.user["username"])
+        )
 
 
 # ── Main App ─────────────────────────────────────────────────────────────────
@@ -174,6 +188,10 @@ class AdminDashboard(App):
     CSS = """
     #overview-stats {
         padding: 1 2;
+    }
+    #sort-label {
+        padding: 0 2;
+        color: $text-muted;
     }
     #convo-header, #user-header {
         padding: 1 2;
@@ -188,6 +206,7 @@ class AdminDashboard(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
+        Binding("s", "cycle_sort", "Sort"),
         Binding("enter", "select_row", "Open", show=False),
     ]
 
@@ -195,18 +214,17 @@ class AdminDashboard(App):
         super().__init__()
         self.client = make_client(api_url, admin_key)
         self._users: list[dict] = []
-        self._conversations: list[dict] = []
+        self._sort_index: int = 0  # default: messages
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with TabbedContent("Overview", "Users", "Conversations"):
+        with TabbedContent("Overview", "Users"):
             with TabPane("Overview", id="tab-overview"):
                 yield Static(id="overview-stats")
-                yield DataTable(id="top-users-table")
+                yield Static("", id="sort-label")
+                yield DataTable(id="overview-table", cursor_type="row")
             with TabPane("Users", id="tab-users"):
                 yield DataTable(id="users-table", cursor_type="row")
-            with TabPane("Conversations", id="tab-conversations"):
-                yield DataTable(id="convos-table", cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -215,12 +233,18 @@ class AdminDashboard(App):
     def action_refresh(self) -> None:
         self.load_all_data()
 
+    def action_cycle_sort(self) -> None:
+        tabbed = self.query_one(TabbedContent)
+        if tabbed.active != "tab-overview":
+            return
+        self._sort_index = (self._sort_index + 1) % len(SORT_ORDER)
+        self._render_overview_table()
+
     @work(thread=True)
     def load_all_data(self) -> None:
         try:
             stats = fetch(self.client, "/api/admin/stats")
             users = fetch(self.client, "/api/admin/users")
-            conversations = fetch(self.client, "/api/admin/conversations")
         except httpx.HTTPStatusError as e:
             self.app.call_from_thread(
                 self.notify, f"API error: {e.response.status_code}", severity="error"
@@ -231,13 +255,12 @@ class AdminDashboard(App):
                 self.notify, "Could not connect to API", severity="error"
             )
             return
-        self.app.call_from_thread(self._populate, stats, users, conversations)
+        self.app.call_from_thread(self._populate, stats, users)
 
-    def _populate(self, stats: dict, users: list, conversations: list) -> None:
+    def _populate(self, stats: dict, users: list) -> None:
         self._users = users
-        self._conversations = conversations
 
-        # Overview
+        # Overview stats
         overview = self.query_one("#overview-stats", Static)
         overview.update(
             f"[b cyan]Users:[/b cyan] {stats['total_users']}    "
@@ -246,17 +269,13 @@ class AdminDashboard(App):
             f"[b cyan]Generations:[/b cyan] {stats['total_generations']}"
         )
 
-        # Top users
-        top_table = self.query_one("#top-users-table", DataTable)
-        top_table.clear(columns=True)
-        top_table.add_columns("#", "Username", "Generations")
-        for i, u in enumerate(stats["top_users"], 1):
-            top_table.add_row(str(i), u["username"], str(u["generations"]))
+        # Overview table (sorted)
+        self._render_overview_table()
 
         # Users table
         users_table = self.query_one("#users-table", DataTable)
         users_table.clear(columns=True)
-        users_table.add_columns("ID", "Username", "Convos", "Messages", "Joined", "Last Active")
+        users_table.add_columns("ID", "Username", "Chats", "Messages", "Joined", "Last Active")
         for u in users:
             users_table.add_row(
                 str(u["id"]),
@@ -267,38 +286,56 @@ class AdminDashboard(App):
                 fmt_dt(u["last_active"]),
             )
 
-        # Conversations table
-        convos_table = self.query_one("#convos-table", DataTable)
-        convos_table.clear(columns=True)
-        convos_table.add_columns("ID", "User", "Title", "Messages", "Created", "Updated")
-        for c in conversations:
-            convos_table.add_row(
-                str(c["id"]),
-                c["username"],
-                truncate(c["title"] or "Untitled", 40),
-                str(c["message_count"]),
-                fmt_dt(c["created_at"]),
-                fmt_dt(c["updated_at"]),
+    def _render_overview_table(self) -> None:
+        sort_name = SORT_ORDER[self._sort_index]
+        sort_key, descending = SORT_KEYS[sort_name]
+
+        label = self.query_one("#sort-label", Static)
+        label.update(f"[dim]Sorted by:[/dim] [b]{sort_name}[/b]  [dim](press [b]s[/b] to cycle)[/dim]")
+
+        sorted_users = sorted(
+            self._users,
+            key=lambda u: u.get(sort_key, 0) or 0,
+            reverse=descending,
+        )
+
+        table = self.query_one("#overview-table", DataTable)
+        table.clear(columns=True)
+        table.add_columns("#", "Username", "Messages", "Chats", "Generations")
+        for i, u in enumerate(sorted_users, 1):
+            table.add_row(
+                str(i),
+                u["username"],
+                str(u["messages_count"]),
+                str(u["conversations_count"]),
+                str(u["generations_count"]),
             )
 
     def action_select_row(self) -> None:
-        # Determine which tab is active
         tabbed = self.query_one(TabbedContent)
         active_tab = tabbed.active
 
-        if active_tab == "tab-users":
+        if active_tab == "tab-overview":
+            table = self.query_one("#overview-table", DataTable)
+            if not self._users or table.row_count == 0:
+                return
+            # The table is sorted, so map the visual row back to the user
+            sort_name = SORT_ORDER[self._sort_index]
+            sort_key, descending = SORT_KEYS[sort_name]
+            sorted_users = sorted(
+                self._users,
+                key=lambda u: u.get(sort_key, 0) or 0,
+                reverse=descending,
+            )
+            user = sorted_users[table.cursor_row]
+            self.push_screen(UserDetailScreen(self.client, user))
+
+        elif active_tab == "tab-users":
             table = self.query_one("#users-table", DataTable)
             if not self._users or table.row_count == 0:
                 return
             user = self._users[table.cursor_row]
             self.push_screen(UserDetailScreen(self.client, user))
-
-        elif active_tab == "tab-conversations":
-            table = self.query_one("#convos-table", DataTable)
-            if not self._conversations or table.row_count == 0:
-                return
-            convo = self._conversations[table.cursor_row]
-            self.push_screen(ConversationDetailScreen(self.client, convo))
 
 
 def main():
