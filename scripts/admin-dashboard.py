@@ -51,15 +51,28 @@ def truncate(text: str, length: int = 80) -> str:
     return text[:length] + "…" if len(text) > length else text
 
 
-# ── Sort keys for Overview table ─────────────────────────────────────────────
+# ── Sort definitions ─────────────────────────────────────────────────────────
 
-SORT_KEYS = {
-    "messages": ("messages_count", True),
-    "chats": ("conversations_count", True),
-    "generations": ("generations_count", True),
-    "id": ("id", False),
-}
-SORT_ORDER = list(SORT_KEYS.keys())  # messages, chats, generations, id
+# (display_label, dict_key, descending)
+OVERVIEW_SORTS = [
+    ("Messages", "messages_count", True),
+    ("Conversations", "conversations_count", True),
+    ("Generations", "generations_count", True),
+    ("ID", "id", False),
+]
+
+USERS_SORTS = [
+    ("Messages sent", "messages_count", True),
+    ("Conversations", "conversations_count", True),
+    ("Date joined", "created_at", True),
+    ("Last active", "last_active", True),
+]
+
+CONVO_SORTS = [
+    ("Messages", "message_count", True),
+    ("Created", "created_at", True),
+    ("Updated", "updated_at", True),
+]
 
 
 # ── Conversation Detail Screen ───────────────────────────────────────────────
@@ -121,6 +134,7 @@ class UserDetailScreen(ModalScreen):
     BINDINGS = [
         Binding("escape", "pop_screen", "Back"),
         Binding("enter", "select_conversation", "Open Conversation"),
+        Binding("s", "cycle_sort", "Sort"),
     ]
 
     def __init__(self, client: httpx.Client, user: dict) -> None:
@@ -128,6 +142,7 @@ class UserDetailScreen(ModalScreen):
         self.client = client
         self.user = user
         self._conversations: list[dict] = []
+        self._sort_index: int = 0
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -142,7 +157,7 @@ class UserDetailScreen(ModalScreen):
                 f"Generations: {u.get('generations_count', 0)}",
                 id="user-header",
             )
-            yield Label("[dim]Conversations:[/dim]")
+            yield Static("", id="convo-sort-label")
             yield DataTable(id="user-convos-table", cursor_type="row")
         yield Footer()
 
@@ -157,9 +172,26 @@ class UserDetailScreen(ModalScreen):
 
     def _populate_conversations(self, convos: list) -> None:
         self._conversations = convos
+        self._render_conversations_table()
+
+    def _render_conversations_table(self) -> None:
+        label_name, sort_key, descending = CONVO_SORTS[self._sort_index]
+        label = self.query_one("#convo-sort-label", Static)
+        label.update(
+            f"[dim]Conversations sorted by:[/dim] [b]{label_name}[/b]  "
+            f"[dim](press [b]s[/b] to cycle)[/dim]"
+        )
+
+        sorted_convos = sorted(
+            self._conversations,
+            key=lambda c: c.get(sort_key) or "",
+            reverse=descending,
+        )
+
         table = self.query_one("#user-convos-table", DataTable)
+        table.clear(columns=True)
         table.add_columns("ID", "Title", "Messages", "Created", "Updated")
-        for c in convos:
+        for c in sorted_convos:
             table.add_row(
                 str(c["id"]),
                 truncate(c["title"] or "Untitled", 50),
@@ -168,6 +200,12 @@ class UserDetailScreen(ModalScreen):
                 fmt_dt(c["updated_at"]),
             )
 
+    def action_cycle_sort(self) -> None:
+        if not self._conversations:
+            return
+        self._sort_index = (self._sort_index + 1) % len(CONVO_SORTS)
+        self._render_conversations_table()
+
     def action_pop_screen(self) -> None:
         self.app.pop_screen()
 
@@ -175,8 +213,14 @@ class UserDetailScreen(ModalScreen):
         table = self.query_one("#user-convos-table", DataTable)
         if not self._conversations or table.row_count == 0:
             return
-        row_idx = table.cursor_row
-        convo = self._conversations[row_idx]
+        # Resolve sorted order to find the right conversation
+        _label, sort_key, descending = CONVO_SORTS[self._sort_index]
+        sorted_convos = sorted(
+            self._conversations,
+            key=lambda c: c.get(sort_key) or "",
+            reverse=descending,
+        )
+        convo = sorted_convos[table.cursor_row]
         self.app.push_screen(
             ConversationDetailScreen(self.client, convo, self.user["username"])
         )
@@ -189,7 +233,7 @@ class AdminDashboard(App):
     #overview-stats {
         padding: 1 2;
     }
-    #sort-label {
+    #sort-label, #users-sort-label, #convo-sort-label {
         padding: 0 2;
         color: $text-muted;
     }
@@ -214,7 +258,8 @@ class AdminDashboard(App):
         super().__init__()
         self.client = make_client(api_url, admin_key)
         self._users: list[dict] = []
-        self._sort_index: int = 0  # default: messages
+        self._overview_sort_index: int = 0
+        self._users_sort_index: int = 0
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -224,6 +269,7 @@ class AdminDashboard(App):
                 yield Static("", id="sort-label")
                 yield DataTable(id="overview-table", cursor_type="row")
             with TabPane("Users", id="tab-users"):
+                yield Static("", id="users-sort-label")
                 yield DataTable(id="users-table", cursor_type="row")
         yield Footer()
 
@@ -235,10 +281,12 @@ class AdminDashboard(App):
 
     def action_cycle_sort(self) -> None:
         tabbed = self.query_one(TabbedContent)
-        if tabbed.active != "tab-overview":
-            return
-        self._sort_index = (self._sort_index + 1) % len(SORT_ORDER)
-        self._render_overview_table()
+        if tabbed.active == "tab-overview":
+            self._overview_sort_index = (self._overview_sort_index + 1) % len(OVERVIEW_SORTS)
+            self._render_overview_table()
+        elif tabbed.active == "tab-users":
+            self._users_sort_index = (self._users_sort_index + 1) % len(USERS_SORTS)
+            self._render_users_table()
 
     @work(thread=True)
     def load_all_data(self) -> None:
@@ -269,29 +317,17 @@ class AdminDashboard(App):
             f"[b cyan]Generations:[/b cyan] {stats['total_generations']}"
         )
 
-        # Overview table (sorted)
         self._render_overview_table()
-
-        # Users table
-        users_table = self.query_one("#users-table", DataTable)
-        users_table.clear(columns=True)
-        users_table.add_columns("ID", "Username", "Chats", "Messages", "Joined", "Last Active")
-        for u in users:
-            users_table.add_row(
-                str(u["id"]),
-                u["username"],
-                str(u["conversations_count"]),
-                str(u["messages_count"]),
-                fmt_dt(u["created_at"]),
-                fmt_dt(u["last_active"]),
-            )
+        self._render_users_table()
 
     def _render_overview_table(self) -> None:
-        sort_name = SORT_ORDER[self._sort_index]
-        sort_key, descending = SORT_KEYS[sort_name]
+        label_name, sort_key, descending = OVERVIEW_SORTS[self._overview_sort_index]
 
         label = self.query_one("#sort-label", Static)
-        label.update(f"[dim]Sorted by:[/dim] [b]{sort_name}[/b]  [dim](press [b]s[/b] to cycle)[/dim]")
+        label.update(
+            f"[dim]Sorted by:[/dim] [b]{label_name}[/b]  "
+            f"[dim](press [b]s[/b] to cycle)[/dim]"
+        )
 
         sorted_users = sorted(
             self._users,
@@ -311,6 +347,43 @@ class AdminDashboard(App):
                 str(u["generations_count"]),
             )
 
+    def _render_users_table(self) -> None:
+        label_name, sort_key, descending = USERS_SORTS[self._users_sort_index]
+
+        label = self.query_one("#users-sort-label", Static)
+        label.update(
+            f"[dim]Sorted by:[/dim] [b]{label_name}[/b]  "
+            f"[dim](press [b]s[/b] to cycle)[/dim]"
+        )
+
+        sorted_users = sorted(
+            self._users,
+            key=lambda u: u.get(sort_key) or "",
+            reverse=descending,
+        )
+
+        table = self.query_one("#users-table", DataTable)
+        table.clear(columns=True)
+        table.add_columns("ID", "Username", "Chats", "Messages", "Joined", "Last Active")
+        for u in sorted_users:
+            table.add_row(
+                str(u["id"]),
+                u["username"],
+                str(u["conversations_count"]),
+                str(u["messages_count"]),
+                fmt_dt(u["created_at"]),
+                fmt_dt(u["last_active"]),
+            )
+
+    def _get_sorted_users(self, sort_list, sort_index):
+        """Return users sorted by the given sort definition."""
+        _label, sort_key, descending = sort_list[sort_index]
+        return sorted(
+            self._users,
+            key=lambda u: u.get(sort_key) or "",
+            reverse=descending,
+        )
+
     def action_select_row(self) -> None:
         tabbed = self.query_one(TabbedContent)
         active_tab = tabbed.active
@@ -319,14 +392,7 @@ class AdminDashboard(App):
             table = self.query_one("#overview-table", DataTable)
             if not self._users or table.row_count == 0:
                 return
-            # The table is sorted, so map the visual row back to the user
-            sort_name = SORT_ORDER[self._sort_index]
-            sort_key, descending = SORT_KEYS[sort_name]
-            sorted_users = sorted(
-                self._users,
-                key=lambda u: u.get(sort_key, 0) or 0,
-                reverse=descending,
-            )
+            sorted_users = self._get_sorted_users(OVERVIEW_SORTS, self._overview_sort_index)
             user = sorted_users[table.cursor_row]
             self.push_screen(UserDetailScreen(self.client, user))
 
@@ -334,7 +400,8 @@ class AdminDashboard(App):
             table = self.query_one("#users-table", DataTable)
             if not self._users or table.row_count == 0:
                 return
-            user = self._users[table.cursor_row]
+            sorted_users = self._get_sorted_users(USERS_SORTS, self._users_sort_index)
+            user = sorted_users[table.cursor_row]
             self.push_screen(UserDetailScreen(self.client, user))
 
 
