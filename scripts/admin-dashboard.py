@@ -58,20 +58,28 @@ OVERVIEW_SORTS = [
     ("Messages", "messages_count", True),
     ("Conversations", "conversations_count", True),
     ("Generations", "generations_count", True),
+    ("Date joined (newest)", "created_at", True),
+    ("Date joined (oldest)", "created_at", False),
+    ("Last active (newest)", "last_active", True),
+    ("Last active (oldest)", "last_active", False),
     ("ID", "id", False),
 ]
 
 USERS_SORTS = [
     ("Messages sent", "messages_count", True),
     ("Conversations", "conversations_count", True),
-    ("Date joined", "created_at", True),
-    ("Last active", "last_active", True),
+    ("Date joined (newest)", "created_at", True),
+    ("Date joined (oldest)", "created_at", False),
+    ("Last active (newest)", "last_active", True),
+    ("Last active (oldest)", "last_active", False),
 ]
 
 CONVO_SORTS = [
     ("Messages", "message_count", True),
-    ("Created", "created_at", True),
-    ("Updated", "updated_at", True),
+    ("Created (newest)", "created_at", True),
+    ("Created (oldest)", "created_at", False),
+    ("Updated (newest)", "updated_at", True),
+    ("Updated (oldest)", "updated_at", False),
 ]
 
 
@@ -133,7 +141,6 @@ class ConversationDetailScreen(ModalScreen):
 class UserDetailScreen(ModalScreen):
     BINDINGS = [
         Binding("escape", "pop_screen", "Back"),
-        Binding("enter", "select_conversation", "Open Conversation"),
         Binding("s", "cycle_sort", "Sort"),
     ]
 
@@ -209,18 +216,16 @@ class UserDetailScreen(ModalScreen):
     def action_pop_screen(self) -> None:
         self.app.pop_screen()
 
-    def action_select_conversation(self) -> None:
-        table = self.query_one("#user-convos-table", DataTable)
-        if not self._conversations or table.row_count == 0:
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if not self._conversations:
             return
-        # Resolve sorted order to find the right conversation
         _label, sort_key, descending = CONVO_SORTS[self._sort_index]
         sorted_convos = sorted(
             self._conversations,
             key=lambda c: c.get(sort_key) or "",
             reverse=descending,
         )
-        convo = sorted_convos[table.cursor_row]
+        convo = sorted_convos[event.cursor_row]
         self.app.push_screen(
             ConversationDetailScreen(self.client, convo, self.user["username"])
         )
@@ -251,7 +256,6 @@ class AdminDashboard(App):
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
         Binding("s", "cycle_sort", "Sort"),
-        Binding("enter", "select_row", "Open", show=False),
     ]
 
     def __init__(self, api_url: str, admin_key: str) -> None:
@@ -260,6 +264,11 @@ class AdminDashboard(App):
         self._users: list[dict] = []
         self._overview_sort_index: int = 0
         self._users_sort_index: int = 0
+        # Maps table widget id → (sort_list, sort_index_attr)
+        self._table_sort_map = {
+            "overview-table": (OVERVIEW_SORTS, "_overview_sort_index"),
+            "users-table": (USERS_SORTS, "_users_sort_index"),
+        }
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -337,7 +346,7 @@ class AdminDashboard(App):
 
         table = self.query_one("#overview-table", DataTable)
         table.clear(columns=True)
-        table.add_columns("#", "Username", "Messages", "Chats", "Generations")
+        table.add_columns("#", "Username", "Messages", "Chats", "Generations", "Joined", "Last Active")
         for i, u in enumerate(sorted_users, 1):
             table.add_row(
                 str(i),
@@ -345,6 +354,8 @@ class AdminDashboard(App):
                 str(u["messages_count"]),
                 str(u["conversations_count"]),
                 str(u["generations_count"]),
+                fmt_dt(u["created_at"]),
+                fmt_dt(u["last_active"]),
             )
 
     def _render_users_table(self) -> None:
@@ -384,25 +395,15 @@ class AdminDashboard(App):
             reverse=descending,
         )
 
-    def action_select_row(self) -> None:
-        tabbed = self.query_one(TabbedContent)
-        active_tab = tabbed.active
-
-        if active_tab == "tab-overview":
-            table = self.query_one("#overview-table", DataTable)
-            if not self._users or table.row_count == 0:
-                return
-            sorted_users = self._get_sorted_users(OVERVIEW_SORTS, self._overview_sort_index)
-            user = sorted_users[table.cursor_row]
-            self.push_screen(UserDetailScreen(self.client, user))
-
-        elif active_tab == "tab-users":
-            table = self.query_one("#users-table", DataTable)
-            if not self._users or table.row_count == 0:
-                return
-            sorted_users = self._get_sorted_users(USERS_SORTS, self._users_sort_index)
-            user = sorted_users[table.cursor_row]
-            self.push_screen(UserDetailScreen(self.client, user))
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        table_id = event.data_table.id
+        if table_id not in self._table_sort_map or not self._users:
+            return
+        sort_list, sort_index_attr = self._table_sort_map[table_id]
+        sort_index = getattr(self, sort_index_attr)
+        sorted_users = self._get_sorted_users(sort_list, sort_index)
+        user = sorted_users[event.cursor_row]
+        self.push_screen(UserDetailScreen(self.client, user))
 
 
 def main():
