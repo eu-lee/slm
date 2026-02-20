@@ -159,7 +159,7 @@ class UserDetailScreen(ModalScreen):
                 f"[b]User: [green]{u['username']}[/green][/b]   ID: {u['id']}\n"
                 f"Joined: [cyan]{fmt_dt(u.get('created_at'))}[/cyan]   "
                 f"Last active: [yellow]{fmt_dt(u.get('last_active'))}[/yellow]   "
-                f"Chats: {u.get('conversations_count', 0)}   "
+                f"Conversations: {u.get('conversations_count', 0)}   "
                 f"Messages: {u.get('messages_count', 0)}   "
                 f"Generations: {u.get('generations_count', 0)}",
                 id="user-header",
@@ -252,6 +252,7 @@ class AdminDashboard(App):
     """
 
     TITLE = "SLM Admin Dashboard"
+    ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
@@ -346,7 +347,7 @@ class AdminDashboard(App):
 
         table = self.query_one("#overview-table", DataTable)
         table.clear(columns=True)
-        table.add_columns("#", "Username", "Messages", "Chats", "Generations", "Joined", "Last Active")
+        table.add_columns("#", "Username", "Messages", "Conversations", "Generations", "Joined", "Last Active")
         for i, u in enumerate(sorted_users, 1):
             table.add_row(
                 str(i),
@@ -375,7 +376,7 @@ class AdminDashboard(App):
 
         table = self.query_one("#users-table", DataTable)
         table.clear(columns=True)
-        table.add_columns("ID", "Username", "Chats", "Messages", "Joined", "Last Active")
+        table.add_columns("ID", "Username", "Conversations", "Messages", "Joined", "Last Active")
         for u in sorted_users:
             table.add_row(
                 str(u["id"]),
