@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.config import CORS_ORIGINS
 from backend.database import init_db
 from backend.inference.engine import ModelEngine
-from backend.routers import auth, chat, conversations
+from backend.routers import admin, auth, chat, conversations
 
 
 @asynccontextmanager
@@ -28,6 +28,7 @@ app.add_middleware(
 )
 
 # API routes
+app.include_router(admin.router)
 app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)

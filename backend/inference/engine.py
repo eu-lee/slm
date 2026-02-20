@@ -251,10 +251,10 @@ class ModelEngine:
         if history_cleared:
             yield {"context_cleared": True}
         token_queue: asyncio.Queue = asyncio.Queue()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         # Run synchronous generation in a thread
-        asyncio.get_event_loop().run_in_executor(
+        loop.run_in_executor(
             None,
             self._generate_tokens,
             toks, max_new_tokens, temperature, top_k, min_new_tokens, token_queue, loop,

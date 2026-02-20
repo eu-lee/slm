@@ -13,6 +13,9 @@ SECRET_KEY = os.getenv("SECRET_KEY", "slm-chat-secret-change-in-production")
 # CORS
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 
+# Admin
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
+
 # Model defaults
 DEFAULT_MAX_NEW_TOKENS = 60
 DEFAULT_TEMPERATURE = 0.7
