@@ -57,3 +57,68 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
         "top_users": top_users,
         "recent_users": recent_users,
     }
+
+
+@router.get("/users", dependencies=[Depends(verify_admin_key)])
+async def admin_users(db: AsyncSession = Depends(get_db)):
+    """All users with per-user stats: conversations count, messages count, last active."""
+    users_q = (
+        select(
+            User.id,
+            User.username,
+            User.created_at,
+            func.count(func.distinct(Conversation.id)).label("conversations_count"),
+            func.count(Message.id).label("messages_count"),
+            func.max(Message.created_at).label("last_active"),
+        )
+        .outerjoin(Conversation, Conversation.user_id == User.id)
+        .outerjoin(Message, Message.conversation_id == Conversation.id)
+        .group_by(User.id)
+        .order_by(User.created_at)
+    )
+    rows = (await db.execute(users_q)).all()
+    return [
+        {
+            "id": r.id,
+            "username": r.username,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "conversations_count": r.conversations_count,
+            "messages_count": r.messages_count,
+            "last_active": r.last_active.isoformat() if r.last_active else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/conversations", dependencies=[Depends(verify_admin_key)])
+async def admin_conversations(
+    limit: int = 50, db: AsyncSession = Depends(get_db)
+):
+    """Recent conversations with username, title, message count, timestamps."""
+    convos_q = (
+        select(
+            Conversation.id,
+            User.username,
+            Conversation.title,
+            func.count(Message.id).label("message_count"),
+            Conversation.created_at,
+            Conversation.updated_at,
+        )
+        .join(User, User.id == Conversation.user_id)
+        .outerjoin(Message, Message.conversation_id == Conversation.id)
+        .group_by(Conversation.id, User.username)
+        .order_by(Conversation.updated_at.desc())
+        .limit(limit)
+    )
+    rows = (await db.execute(convos_q)).all()
+    return [
+        {
+            "id": r.id,
+            "username": r.username,
+            "title": r.title,
+            "message_count": r.message_count,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+        for r in rows
+    ]
